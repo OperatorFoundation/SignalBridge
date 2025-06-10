@@ -5,11 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
+import org.operatorfoundation.signalbridge.models.AudioCapabilities
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import timber.log.Timber
 
@@ -35,6 +37,16 @@ internal class UsbDeviceDiscovery(private val context: Context, private val usbM
             0x0763, // M-Audio
             0x1235, // Focusrite-Novation
             0x0499, // Yamaha Corporation
+        )
+
+        // Known high quality audio vendord (TODO: update based on testing)
+        private val professionalVendors = setOf(
+            0x1397, // BEHRINGER
+            0x0582, // Roland
+            0x0944, // KORG
+            0x0763, // M-Audio
+            0x1235, // Focusrite-Novation
+            0x0499, // Yamaha
         )
 
         // Audio related keywords for product name matching
@@ -120,5 +132,172 @@ internal class UsbDeviceDiscovery(private val context: Context, private val usbM
 
         return audioDevices
     }
+
+    /**
+     * Analyzes an USB device to determine if it's an audio device
+     * Returns audio capabilities if it's an audio device, null if it's not
+     */
+    private fun analyzeDevice(device: UsbDevice): AudioCapabilities?
+    {
+        Timber.d("Analyzing device: ${device.productName} (${device.vendorId} ${device.productId})")
+
+        // Method 1: Check USB interface classes
+        val hasAudioInterface = checkForAudioInterfaces(device)
+        if (hasAudioInterface)
+        {
+            Timber.d("Device has USB audio interfaces")
+            return determineCapabilitiesFromInterfaces(device)
+        }
+
+        // Method 2: Check known audio device vendors
+        if (device.vendorId in KNOWN_AUDIO_VENDORS)
+        {
+            Timber.d("Device is from known audio vendor: 0x${device.vendorId.toString(16)}")
+            return AudioCapabilities.createDefault().copy(
+                maxLatencyMs = getExpectedLatencyForVendor(device.vendorId)
+            )
+        }
+
+        // Method 3: Check product name for audio keywords
+        val productName = device.productName?.lowercase() ?: ""
+        val hasAudioKeyword = AUDIO_KEYWORDS.any { keyword ->
+            productName.contains(keyword)
+        }
+
+        if (hasAudioKeyword)
+        {
+            Timber.d("Device has audio-related name: ${device.productName}")
+            return AudioCapabilities.createDefault()
+        }
+
+        // Method 4: Check for specific device class (if available)
+        if (device.deviceClass == USB_CLASS_AUDIO) {
+            Timber.d("Device has audio device class")
+            return AudioCapabilities.createDefault()
+        }
+
+        Timber.d("Device does not appear to be an audio device")
+        return null
+    }
+
+    /**
+     * Checks if device has USB audio interfaces
+     */
+    private fun checkForAudioInterfaces(device: UsbDevice): Boolean
+    {
+        for (i in 0 until device.interfaceCount)
+        {
+            val usbInterface = device.getInterface(i)
+            if (isAudioInterface(usbInterface))
+            {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Determines if a USB interface is an audio interface
+     */
+    private fun isAudioInterface(usbInterface: UsbInterface): Boolean
+    {
+        return usbInterface.interfaceClass == USB_CLASS_AUDIO &&
+                (usbInterface.interfaceSubclass == USB_SUBCLASS_AUDIOCONTROL ||
+                        usbInterface.interfaceSubclass == USB_SUBCLASS_AUDIOSTREAMING)
+    }
+
+    /**
+     * Determines audio capabilities from USB interfaces.
+     * TODO: This is a simplified implementation.
+     */
+    private fun determineCapabilitiesFromInterfaces(device: UsbDevice): AudioCapabilities
+    {
+        // TODO: Parse actual USB audio descriptors
+
+        val isHighQualityDevice = isHighQualityAudioDevice(device)
+        val defaultSampleRates = listOf(48000, 44100)
+        val highQualitySampleRates = defaultSampleRates + listOf(96000, 192000)
+        val defaultChannelCounts = listOf(1, 2)
+        val highQualityChannelCounts = defaultChannelCounts + listOf(4, 8)
+        val defaultBitDepths = listOf(16)
+        val highQualityBitDepths = defaultBitDepths + listOf(24, 32)
+        val defaultMaxLatency = 50
+        val highQualityMaxLatency = 20
+        val supportsOutput = hasAudioOutputInterface(device)
+        val supportsInput = true
+
+        if (isHighQualityDevice)
+        {
+            return AudioCapabilities(highQualitySampleRates, highQualityChannelCounts, highQualityBitDepths, highQualityMaxLatency, supportsInput, supportsOutput)
+        }
+        else
+        {
+            return AudioCapabilities(defaultSampleRates, defaultChannelCounts, defaultBitDepths, defaultMaxLatency, supportsInput, supportsOutput)
+        }
+    }
+
+    /**
+     * Checks if the device appears to be a high-quality audio interface
+     */
+    private fun isHighQualityAudioDevice(device: UsbDevice): Boolean
+    {
+        return device.vendorId in professionalVendors ||
+                device.productName?.contains("professional", ignoreCase = true) == true ||
+                device.productName?.contains("studio", ignoreCase = true) == true
+    }
+
+    /**
+     * Checks if device has audio output capabilities
+     */
+    private fun hasAudioOutputInterface(device: UsbDevice): Boolean
+    {
+        // Stub, for now we'll assume most USB audio devices support output
+        // TODO: This requires more detailed USB descriptor analysis for accuracy
+        return true
+    }
+
+    /**
+     * Gets expected latency based on vendor
+     */
+    private fun getExpectedLatencyForVendor(vendorId: Int): Int
+    {
+        return when (vendorId) {
+            in professionalVendors -> 20 // Professional audio
+            else -> 50 // Consumer audio
+        }
+    }
+
+    /**
+     * Creates UsbAudioDevice from UsbDevice
+     */
+    private fun createUsbAudioDevice(usbDevice: UsbDevice, capabilities: AudioCapabilities): UsbAudioDevice
+    {
+        return UsbAudioDevice(
+            deviceId = usbDevice.deviceId,
+            productName = usbDevice.productName ?: "Unknown USB Audio Device",
+            manufacturerName = usbDevice.manufacturerName,
+            vendorId = usbDevice.vendorId,
+            productId = usbDevice.productId,
+            capabilities = capabilities
+        )
+    }
+
+    /**
+     * Gets USB device by ID
+     */
+    fun getUsbDeviceById(deviceId: Int): UsbDevice?
+    {
+        return usbManager.deviceList.values.find { it.deviceId == deviceId }
+    }
+
+    /**
+     * Cleanup resources
+     */
+    fun cleanup()
+    {
+        Timber.d("USB device discovery cleanup completed")
+    }
+
 
 }
