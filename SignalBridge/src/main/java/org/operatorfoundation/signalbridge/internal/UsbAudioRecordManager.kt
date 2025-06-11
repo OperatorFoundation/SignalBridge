@@ -346,8 +346,26 @@ internal class UsbAudioRecordManager(private val usbDevice: UsbDevice)
  */
 sealed class AudioRecordResult
 {
-    data class Success(val audioRecord: AudioRecord, val audioSource: Int): AudioRecordResult() { val isSuccess = true }
-    data class Failed(val error: Exception): AudioRecordResult() { val isSuccess = false }
+    /**
+     * Indicates whether this result represents a successful AudioRecord initialization
+     */
+    abstract val isSuccess: Boolean
+
+    /**
+     * The error associated with this result, null if successful
+     */
+    abstract val error: Exception?
+
+    data class Success(val audioRecord: AudioRecord, val audioSource: Int): AudioRecordResult()
+    {
+        override val isSuccess = true
+        override val error: Exception? = null
+    }
+
+    data class Failed(override val error: Exception): AudioRecordResult()
+    {
+        override val isSuccess = false
+    }
 }
 
 /**
