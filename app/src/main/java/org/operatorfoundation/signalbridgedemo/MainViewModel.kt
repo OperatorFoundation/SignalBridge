@@ -78,10 +78,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Manually refreshes the list of available devices.
      */
-    fun refreshDevices() {
-        Timber.d("Manually refreshing device list")
-        // Device discovery is continuous, so this is mainly for UI feedback
-        // In a real implementation, you might trigger a one-time scan
+    fun refreshDevices()
+    {
+        try
+        {
+            Timber.d("Manually refreshing device list")
+            // Device discovery is continuous, so this is mainly for UI feedback
+            // Trigger a one-time scan
+            val audioManagerImpl = audioManager as UsbAudioManagerImpl
+            audioManagerImpl.discoverDevices()
+        }
+        catch (exception: Exception)
+        {
+            Timber.e(exception, "Error during manual device refresh")
+
+            _uiState.update { currentState ->
+                currentState.copy(errorMessage = "Device refresh failed: ${exception.message}")
+            }
+        }
+
     }
 
     /**
@@ -89,17 +104,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      *
      * @param device The device to connect to
      */
-    fun connectToDevice(device: UsbAudioDevice) {
+    fun connectToDevice(device: UsbAudioDevice)
+    {
         viewModelScope.launch {
-            try {
+            try
+            {
                 Timber.d("Attempting to connect to device: ${device.displayName}")
+
+                // If already connected to a device, disconnect first
+                if (currentConnection != null)
+                {
+                    Timber.d("Disconnecting from current device before connecting to new device")
+                    currentConnection?.disconnect()
+                    currentConnection = null
+                }
 
                 // Clear any previous errors
                 _uiState.update { it.copy(errorMessage = null) }
 
                 val result = audioManager.connectToDevice(device)
 
-                if (result.isSuccess) {
+                if (result.isSuccess)
+                {
                     val connection = result.getOrNull()!!
                     currentConnection = connection
 
@@ -115,8 +141,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     observeAudioLevels(connection)
 
                     Timber.i("Successfully connected to device: ${device.displayName}")
-
-                } else {
+                }
+                else
+                {
                     val exception = result.exceptionOrNull()
                     val errorMessage = when (exception) {
                         is UsbAudioException -> exception.message ?: "Unknown USB audio error"
@@ -128,8 +155,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         currentState.copy(errorMessage = errorMessage)
                     }
                 }
-
-            } catch (exception: Exception) {
+            }
+            catch (exception: Exception)
+            {
                 Timber.e(exception, "Unexpected error during device connection")
                 _uiState.update { currentState ->
                     currentState.copy(
@@ -143,7 +171,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Disconnects from the currently connected device.
      */
-    fun disconnect() {
+    fun disconnect()
+    {
         viewModelScope.launch {
             try {
                 Timber.d("Disconnecting from current device")
@@ -184,7 +213,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
-            try {
+            try
+            {
                 Timber.d("Starting audio recording")
 
                 connection.startRecording().collect { audioData ->

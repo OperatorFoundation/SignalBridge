@@ -32,3 +32,4 @@ google-services.json
 # Android Profiling
 *.hprof
 *.salive
+app/src/.DS_Store

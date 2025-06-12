@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -65,7 +66,8 @@ class MainActivity : ComponentActivity() {
  */
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel) {
+fun MainScreen(viewModel: MainViewModel)
+{
 
     // Request audio recording permission
     val audioPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
@@ -74,8 +76,10 @@ fun MainScreen(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     // Request permission if not granted
-    LaunchedEffect(audioPermissionState.status.isGranted) {
-        if (!audioPermissionState.status.isGranted) {
+    LaunchedEffect(audioPermissionState.status.isGranted)
+    {
+        if (!audioPermissionState.status.isGranted)
+        {
             audioPermissionState.launchPermissionRequest()
         }
     }
@@ -83,13 +87,15 @@ fun MainScreen(viewModel: MainViewModel) {
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
-    ) {
+    )
+    {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
+        )
+        {
             // Header
             Text(
                 text = "USB Audio Library Demo",
@@ -98,15 +104,19 @@ fun MainScreen(viewModel: MainViewModel) {
             )
 
             // Permission status
-            if (!audioPermissionState.status.isGranted) {
+            if (!audioPermissionState.status.isGranted)
+            {
                 PermissionRequiredCard {
                     audioPermissionState.launchPermissionRequest()
                 }
-            } else {
+            }
+            else
+            {
                 // Main content
                 DeviceDiscoverySection(
                     devices = uiState.availableDevices,
-                    onRefreshDevices = { viewModel.refreshDevices() }
+                    onRefreshDevices = { viewModel.refreshDevices() },
+                    onConnectToDevice = { device -> viewModel.connectToDevice(device) }
                 )
 
                 ConnectionStatusSection(
@@ -188,41 +198,51 @@ fun PermissionRequiredCard(onRequestPermission: () -> Unit) {
 @Composable
 fun DeviceDiscoverySection(
     devices: List<UsbAudioDevice>,
-    onRefreshDevices: () -> Unit
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    onRefreshDevices: () -> Unit,
+    onConnectToDevice: (UsbAudioDevice) -> Unit
+)
+{
+    Card(modifier = Modifier.fillMaxWidth())
+    {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        )
+        {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
-            ) {
+            )
+            {
                 Text(
                     text = "Available USB Audio Devices",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
-                TextButton(onClick = onRefreshDevices) {
+                TextButton(onClick = onRefreshDevices)
+                {
                     Text("Refresh")
                 }
             }
 
-            if (devices.isEmpty()) {
+            if (devices.isEmpty())
+            {
                 Text(
                     text = "No USB audio devices found. Connect a USB audio device and tap Refresh.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            } else {
+            }
+            else
+            {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.heightIn(max = 200.dp)
-                ) {
+                )
+                {
                     items(devices) { device ->
-                        DeviceItem(device = device)
+                        DeviceItem(device = device, onClick = onConnectToDevice)
                     }
                 }
             }
@@ -234,9 +254,12 @@ fun DeviceDiscoverySection(
  * Individual device item in the device list.
  */
 @Composable
-fun DeviceItem(device: UsbAudioDevice) {
+fun DeviceItem(device: UsbAudioDevice, onClick: (UsbAudioDevice) -> Unit)
+{
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick(device) },
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = MaterialTheme.shapes.small
     ) {
@@ -333,7 +356,8 @@ fun AudioControlSection(
     audioLevel: AudioLevelInfo?,
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit
-) {
+)
+{
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),

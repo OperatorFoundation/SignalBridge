@@ -63,7 +63,8 @@ internal class UsbDeviceDiscovery(private val context: Context, private val usbM
         Timber.d("Starting USB audio device discovery")
 
         // Create broadcast receiver for USB events
-        val usbReceiver = object : BroadcastReceiver() {
+        val usbReceiver = object : BroadcastReceiver()
+        {
             override fun onReceive(context: Context?, intent: Intent)
             {
                 when (intent.action)
