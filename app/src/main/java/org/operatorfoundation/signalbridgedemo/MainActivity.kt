@@ -68,7 +68,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(viewModel: MainViewModel)
 {
-
     // Request audio recording permission
     val audioPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
 
@@ -89,7 +88,7 @@ fun MainScreen(viewModel: MainViewModel)
         color = MaterialTheme.colorScheme.background
     )
     {
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp),
@@ -97,63 +96,81 @@ fun MainScreen(viewModel: MainViewModel)
         )
         {
             // Header
-            Text(
-                text = "USB Audio Library Demo",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
+            item {
+                Text(
+                    text = "USB Audio Library Demo",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
             // Permission status
             if (!audioPermissionState.status.isGranted)
             {
-                PermissionRequiredCard {
-                    audioPermissionState.launchPermissionRequest()
+                item {
+                    PermissionRequiredCard {
+                        audioPermissionState.launchPermissionRequest()
+                    }
                 }
             }
             else
             {
                 // Main content
-                DeviceDiscoverySection(
-                    devices = uiState.availableDevices,
-                    onRefreshDevices = { viewModel.refreshDevices() },
-                    onConnectToDevice = { device -> viewModel.connectToDevice(device) }
-                )
+                item {
+                    DeviceDiscoverySection(
+                        devices = uiState.availableDevices,
+                        onConnectToDevice = { device -> viewModel.connectToDevice(device) }
+                    )
+                }
 
-                ConnectionStatusSection(
-                    connectionStatus = uiState.connectionStatus,
-                    connectedDevice = uiState.connectedDevice,
-                    onConnect = { device -> viewModel.connectToDevice(device) },
-                    onDisconnect = { viewModel.disconnect() }
-                )
+                item {
+                    ConnectionStatusSection(
+                        connectionStatus = uiState.connectionStatus,
+                        connectedDevice = uiState.connectedDevice,
+                        onConnect = { device -> viewModel.connectToDevice(device) },
+                        onDisconnect = { viewModel.disconnect() }
+                    )
+                }
 
                 if (uiState.connectedDevice != null) {
-                    AudioControlSection(
-                        recordingState = uiState.recordingState,
-                        audioLevel = uiState.audioLevel,
-                        onStartRecording = { viewModel.startRecording() },
-                        onStopRecording = { viewModel.stopRecording() }
-                    )
+                    item {
+                        AudioControlSection(
+                            recordingState = uiState.recordingState,
+                            audioLevel = uiState.audioLevel,
+                            isPlaybackEnabled = uiState.isPlaybackEnabled,
+                            onStartRecording = { viewModel.startRecording() },
+                            onStopRecording = { viewModel.stopRecording() },
+                            onTogglePlayback = { viewModel.togglePlayback() }
+                        )
+                    }
 
                     //  Add diagnostic section
-                    DiagnosticSection(
-                        onRunDiagnostics = { viewModel.runAudioRecordDiagnostics() }
-                    )
+                    item {
+                        DiagnosticSection(
+                            onRunDiagnostics = { viewModel.runAudioRecordDiagnostics() },
+                            onTestSystemAudio = { viewModel.testSystemAudio() }
+                        )
+                    }
                 }
 
                 //  Display diagnostic results
                 uiState.diagnosticResults?.let { results ->
-                    DiagnosticResultsCard(
-                        results = results,
-                        onDismiss = { viewModel.clearDiagnostics() }
-                    )
+                    item {
+                        DiagnosticResultsCard(
+                            results = results,
+                            onDismiss = { viewModel.clearDiagnostics() }
+                        )
+                    }
                 }
 
                 // Error display
                 uiState.errorMessage?.let { error ->
-                    ErrorCard(
-                        message = error,
-                        onDismiss = { viewModel.clearError() }
-                    )
+                    item {
+                        ErrorCard(
+                            message = error,
+                            onDismiss = { viewModel.clearError() }
+                        )
+                    }
                 }
             }
         }
@@ -198,7 +215,6 @@ fun PermissionRequiredCard(onRequestPermission: () -> Unit) {
 @Composable
 fun DeviceDiscoverySection(
     devices: List<UsbAudioDevice>,
-    onRefreshDevices: () -> Unit,
     onConnectToDevice: (UsbAudioDevice) -> Unit
 )
 {
@@ -220,10 +236,6 @@ fun DeviceDiscoverySection(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
-                TextButton(onClick = onRefreshDevices)
-                {
-                    Text("Refresh")
-                }
             }
 
             if (devices.isEmpty())
@@ -354,8 +366,10 @@ fun ConnectionStatusSection(
 fun AudioControlSection(
     recordingState: RecordingState,
     audioLevel: AudioLevelInfo?,
+    isPlaybackEnabled: Boolean,
     onStartRecording: () -> Unit,
-    onStopRecording: () -> Unit
+    onStopRecording: () -> Unit,
+    onTogglePlayback: () -> Unit
 )
 {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -414,6 +428,59 @@ fun AudioControlSection(
                     )
                 ) {
                     Text("Stop Recording")
+                }
+            }
+
+            // Playback control
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Playback through speakers:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Switch(
+                    checked = isPlaybackEnabled,
+                    onCheckedChange = { onTogglePlayback() },
+                    enabled = true
+                )
+            }
+
+            if (isPlaybackEnabled)
+            {
+                Text(
+                    text = "🔊 Audio from USB device will play through phone speakers",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Debug info section
+            if (isPlaybackEnabled) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color.Yellow.copy(alpha = 0.1f))
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Text(
+                            text = "🔧 Playback Debug Info",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Toggle: ON | Recording: ${recordingState::class.simpleName}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "Audio Level: ${audioLevel?.currentLevel?.times(100)?.toInt() ?: 0}%",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             }
         }
@@ -511,7 +578,10 @@ fun LevelBar(
  *  Diagnostic section for testing AudioRecord compatibility
  */
 @Composable
-fun DiagnosticSection(onRunDiagnostics: () -> Unit) {
+fun DiagnosticSection(
+    onRunDiagnostics: () -> Unit,
+    onTestSystemAudio: () -> Unit
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -524,7 +594,7 @@ fun DiagnosticSection(onRunDiagnostics: () -> Unit) {
             )
 
             Text(
-                text = "Test if AudioRecord can access the connected USB audio device. This is the critical compatibility test.",
+                text = "Test if AudioRecord can access the connected USB audio device.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -534,6 +604,13 @@ fun DiagnosticSection(onRunDiagnostics: () -> Unit) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Run AudioRecord Compatibility Test")
+            }
+
+            Button(
+                onClick = onTestSystemAudio,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("🔊 Test System Audio (440Hz Tone)")
             }
         }
     }

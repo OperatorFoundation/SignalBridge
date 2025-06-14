@@ -1,6 +1,9 @@
 package org.operatorfoundation.signalbridgedemo
 
 import android.app.Application
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import org.operatorfoundation.signalbridge.UsbAudioConnection
@@ -9,8 +12,9 @@ import org.operatorfoundation.signalbridge.exceptions.UsbAudioException
 import org.operatorfoundation.signalbridge.models.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import org.operatorfoundation.signalbridge.internal.UsbAudioManagerImpl
 import timber.log.Timber
+import kotlin.math.PI
+import kotlin.math.sin
 
 /**
  * ViewModel for the main demo activity.
@@ -76,30 +80,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Manually refreshes the list of available devices.
-     */
-    fun refreshDevices()
-    {
-        try
-        {
-            Timber.d("Manually refreshing device list")
-            // Device discovery is continuous, so this is mainly for UI feedback
-            // Trigger a one-time scan
-            val audioManagerImpl = audioManager as UsbAudioManagerImpl
-            audioManagerImpl.discoverDevices()
-        }
-        catch (exception: Exception)
-        {
-            Timber.e(exception, "Error during manual device refresh")
-
-            _uiState.update { currentState ->
-                currentState.copy(errorMessage = "Device refresh failed: ${exception.message}")
-            }
-        }
-
-    }
-
-    /**
      * Connects to the specified USB audio device.
      *
      * @param device The device to connect to
@@ -128,6 +108,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 {
                     val connection = result.getOrNull()!!
                     currentConnection = connection
+
+                    // Start observing playback state
+                    observePlaybackState(currentConnection!!)
 
                     _uiState.update { currentState ->
                         currentState.copy(
@@ -164,6 +147,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         errorMessage = "Unexpected error: ${exception.message}"
                     )
                 }
+            }
+        }
+    }
+
+    /**
+     * Observes playback state changes from the connection
+     */
+    private fun observePlaybackState(connection: UsbAudioConnection)
+    {
+        viewModelScope.launch {
+            try
+            {
+                connection.getPlaybackEnabled().collect { enabled ->
+                    _uiState.update { currentState ->
+                        currentState.copy(isPlaybackEnabled = enabled)
+                    }
+                }
+            }
+            catch (exception: Exception)
+            {
+                Timber.e(exception, "Error observing playback state")
             }
         }
     }
@@ -265,53 +269,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Toggles audio playback through phone speakers
+     */
+    fun togglePlayback()
+    {
+        viewModelScope.launch {
+            val connection = currentConnection
+            if (connection == null)
+            {
+                _uiState.update { it.copy(errorMessage = "No device connected for playback") }
+                return@launch
+            }
+
+            try
+            {
+                val currentPlaybackState = _uiState.value.isPlaybackEnabled
+                val newPlaybackState = !currentPlaybackState
+
+                connection.setPlaybackEnabled(newPlaybackState)
+
+                _uiState.update { currentState ->
+                    currentState.copy(isPlaybackEnabled = newPlaybackState)
+                }
+
+                Timber.d("Audio playback toggled: $newPlaybackState")
+
+            }
+            catch (exception: Exception)
+            {
+                Timber.e(exception, "Error toggling audio playback")
+                _uiState.update { currentState ->
+                    currentState.copy(errorMessage = "Failed to toggle playback: ${exception.message}")
+                }
+            }
+        }
+    }
+
+    /**
      * Runs comprehensive AudioRecord diagnostics
      */
     fun runAudioRecordDiagnostics()
     {
         viewModelScope.launch {
             val device = _uiState.value.connectedDevice
-            if (device == null) {
+            if (device == null)
+            {
                 _uiState.update { it.copy(errorMessage = "No device connected for diagnostics") }
                 return@launch
             }
 
-            try {
-                Timber.d("Running Phase 2 AudioRecord diagnostics for device: ${device.displayName}")
+            try
+            {
+                Timber.d("Running AudioRecord diagnostics for device: ${device.displayName}")
 
-                // Cast to implementation to access diagnostic methods
-                val audioManagerImpl = audioManager as UsbAudioManagerImpl
-                val diagnostics = audioManagerImpl.getAudioRecordDiagnostics(device)
+                // Use public interface method
+                val diagnostics = audioManager.getAudioRecordDiagnostics(device)
 
-                // Log comprehensive diagnostic information
-                Timber.i("=== Phase 2 AudioRecord Diagnostics ===")
+                // Log results
+                Timber.i("=== AudioRecord Diagnostics ===")
                 Timber.i("Device: ${diagnostics.deviceName}")
-                Timber.i("Device ID: ${diagnostics.deviceId}")
-                Timber.i("Has Permission: ${diagnostics.hasPermission}")
                 Timber.i("Compatible: ${diagnostics.isCompatible}")
                 Timber.i("Summary: ${diagnostics.summary}")
 
-                if (diagnostics.audioRecordInfo != null)
-                {
-                    val info = diagnostics.audioRecordInfo!!
+                diagnostics.audioRecordInfo?.let { info ->
                     Timber.i("AudioRecord State: ${info.state}")
-                    Timber.i("Recording State: ${info.recordingState}")
+                    Timber.i("Audio Source: ${info.audioSource}")
                     Timber.i("Sample Rate: ${info.sampleRate}")
                     Timber.i("Buffer Size: ${info.bufferSize}")
-                    Timber.i("Min Buffer Size: ${info.minBufferSize}")
-                    Timber.i("Is Initialized: ${info.isInitialized}")
                 }
 
-                // Update UI with diagnostic results
+                // Update UI
                 val resultMessage = buildString {
                     appendLine("AudioRecord Diagnostics:")
                     appendLine("Device: ${diagnostics.deviceName}")
                     appendLine("Compatible: ${if (diagnostics.isCompatible) "✅ YES" else "❌ NO"}")
                     appendLine("Summary: ${diagnostics.summary}")
 
-                    if (diagnostics.audioRecordInfo != null)
-                    {
-                        val info = diagnostics.audioRecordInfo!!
+                    diagnostics.audioRecordInfo?.let { info ->
                         appendLine("Buffer Size: ${info.bufferSize}")
                         appendLine("Sample Rate: ${info.sampleRate}")
                     }
@@ -324,13 +358,78 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-            } catch (exception: Exception) {
+            } catch (exception: Exception)
+            {
                 Timber.e(exception, "Error running AudioRecord diagnostics")
                 _uiState.update { currentState ->
-                    currentState.copy(
-                        errorMessage = "Diagnostic failed: ${exception.message}"
-                    )
+                    currentState.copy(errorMessage = "Diagnostic failed: ${exception.message}")
                 }
+            }
+        }
+    }
+
+    fun testSystemAudio()
+    {
+        viewModelScope.launch {
+            try {
+                _uiState.update { it.copy(errorMessage = "Testing system audio...") }
+
+                // Generate 1 second of 440Hz sine wave
+                val sampleRate = 48000
+                val samples = ShortArray(sampleRate) // 1 second
+                val frequency = 440.0 // A4 note
+
+                for (i in samples.indices) {
+                    val time = i.toDouble() / sampleRate
+                    val amplitude = (sin(2 * PI * frequency * time) * Short.MAX_VALUE * 0.3).toInt()
+                    samples[i] = amplitude.toShort()
+                }
+
+                // Check minimum buffer size first
+                val minBufferSize = AudioTrack.getMinBufferSize(
+                    sampleRate,
+                    AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                )
+
+                if (minBufferSize == AudioTrack.ERROR || minBufferSize == AudioTrack.ERROR_BAD_VALUE) {
+                    _uiState.update { it.copy(errorMessage = "Invalid audio configuration for system test") }
+                    return@launch
+                }
+
+                // Use the larger of minBufferSize or our sample size
+                val bufferSize = maxOf(minBufferSize, samples.size * 2) // *2 for 16-bit samples
+
+                // Create a temporary AudioTrack to test system audio directly
+                val audioTrack = AudioTrack(
+                    AudioManager.STREAM_MUSIC,
+                    sampleRate,
+                    AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize,
+                    AudioTrack.MODE_STREAM // Try STREAM mode instead of STATIC
+                )
+
+                if (audioTrack.state == AudioTrack.STATE_INITIALIZED) {
+                    audioTrack.play()
+                    val written = audioTrack.write(samples, 0, samples.size)
+
+                    _uiState.update { it.copy(errorMessage = "Playing test tone... written $written samples") }
+
+                    // Wait for playback to finish
+                    kotlinx.coroutines.delay(1200)
+
+                    audioTrack.stop()
+                    audioTrack.release()
+
+                    _uiState.update { it.copy(errorMessage = "System audio test completed - did you hear a beep?") }
+                } else {
+                    _uiState.update { it.copy(errorMessage = "System AudioTrack failed - state: ${audioTrack.state}, minBuffer: $minBufferSize") }
+                    audioTrack.release()
+                }
+
+            } catch (e: Exception) {
+                _uiState.update { it.copy(errorMessage = "Audio test exception: ${e.message}") }
             }
         }
     }
@@ -457,6 +556,7 @@ data class MainUiState(
     val connectionStatus: ConnectionStatus = ConnectionStatus.Disconnected,
     val connectedDevice: UsbAudioDevice? = null,
     val recordingState: RecordingState = RecordingState.Stopped,
+    val isPlaybackEnabled: Boolean = false,
     val audioLevel: AudioLevelInfo? = null,
     val errorMessage: String? = null,
     val diagnosticResults: String? = null  // Add diagnostic results

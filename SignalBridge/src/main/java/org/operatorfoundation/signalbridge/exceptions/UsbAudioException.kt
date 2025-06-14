@@ -40,6 +40,8 @@ class AudioRecordingException(
     cause: Throwable? = null
 ) : UsbAudioException(message, cause)
 
+class AudioRecordException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
 class ConnectionTimeoutException(
     val timeoutMs: Long,
     message: String = "Connection attempt timed out after ${timeoutMs}ms"

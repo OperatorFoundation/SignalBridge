@@ -8,6 +8,7 @@ import androidx.annotation.RequiresPermission
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.operatorfoundation.signalbridge.UsbAudioConnection
+import org.operatorfoundation.signalbridge.exceptions.AudioRecordException
 import org.operatorfoundation.signalbridge.exceptions.AudioRecordInitializationException
 import org.operatorfoundation.signalbridge.exceptions.AudioRecordingException
 import org.operatorfoundation.signalbridge.exceptions.DeviceDisconnectedException
@@ -19,39 +20,45 @@ import org.operatorfoundation.signalbridge.models.AudioLevelInfo
 import org.operatorfoundation.signalbridge.models.RecordingState
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import timber.log.Timber
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Phase 2 - Real implementation of UsbAudioConnection using actual USB and AudioRecord
+ * Implementation of UsbAudioConnection using USB and AudioRecord
  *
- * This class integrates all the real components:
- * - Real USB device management
- * - Real AudioRecord integration
- * - Real audio level monitoring
- * - Real device state tracking
+ * This class integrates:
+ * - USB device management
+ * - AudioRecord integration
+ * - Audio level monitoring
+ * - Device state tracking
  */
 internal class RealUsbAudioConnection(
     private val context: Context,
     override val device: UsbAudioDevice,
     private val usbDevice: UsbDevice,
     private val usbManager: UsbManager
-) : UsbAudioConnection {
-
-    companion object {
+) : UsbAudioConnection
+{
+    companion object
+    {
         // Audio level calculation constants
         private const val PEAK_HOLD_TIME_MS = 1000L
         private const val AVERAGE_CALCULATION_WINDOW_SIZE = 4096
     }
 
     // Core audio recording manager
-    private var audioRecordManager: UsbAudioRecordManager? = null
+    private var audioRecordManager: AudioRecordManager? = null
+    private var audioLevelProcessor: AudioLevelProcessor? = null
+    private var audioOutputManager: AudioOutputManager? = null
+
+    // Sequence number for audio data tracking
+    private val sequenceNumber = AtomicLong(0)
 
     // State management
     private val _recordingState = MutableStateFlow<RecordingState>(RecordingState.Stopped)
-    private val _audioLevel = MutableStateFlow(
-        AudioLevelInfo(0f, 0f, 0f, System.currentTimeMillis())
-    )
+    private val _audioLevel = MutableStateFlow(AudioLevelInfo(0f, 0f, 0f, System.currentTimeMillis()))
+    private val _isPlaybackEnabled = MutableStateFlow(false)
 
     // Audio level tracking
     private var peakLevel = 0f
@@ -64,47 +71,57 @@ internal class RealUsbAudioConnection(
     /**
      * Initializes the USB audio connection and tests AudioRecord compatibility
      */
-    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
-    suspend fun initializeAudioRecord(): ConnectionInitResult {
+    suspend fun initializeAudioRecord(): ConnectionInitResult
+    {
         Timber.d("Initializing real USB audio connection for device: ${device.displayName}")
 
-        return try {
+        return try
+        {
             // Validate device configuration
-            if (!device.capabilities.supportsConfiguration(48000, 1, 16)) {
+            if (!device.capabilities.supportsConfiguration(48000, 1, 16))
+            {
                 return ConnectionInitResult.Failed(
                     UnsupportedAudioConfigurationException(48000, 1, 16),
                     "Device does not support required audio configuration"
                 )
             }
 
-            // Create and initialize AudioRecord manager
-            val manager = UsbAudioRecordManager(usbDevice)
-            val audioRecordResult = manager.initializeAudioRecord()
+            // Create and initialize the AudioRecordManager
+            val recordManager = AudioRecordManager()
+            val recordManagerResult = recordManager.initialize()
 
-            if (audioRecordResult.isSuccess) {
-                audioRecordManager = manager
+            if (recordManagerResult.isSuccess)
+            {
+                // Set up all components
+                audioRecordManager = recordManager
+                audioLevelProcessor = AudioLevelProcessor()
+                audioOutputManager = AudioOutputManager()
+                val outputInitialized = audioOutputManager!!.initialize()
 
-                val successResult = audioRecordResult as AudioRecordResult.Success
-                Timber.i("AudioRecord initialized successfully for USB device: ${device.displayName}")
-                Timber.i("Using audio source: ${successResult.audioSource}")
+                val successResult = recordManagerResult as AudioRecordInitResult.Success
+                Timber.i("AudioRecordManager initialized successfully for USB device: ${device.displayName}")
 
                 ConnectionInitResult.Success(
-                    audioRecordInfo = manager.getAudioInfo(),
-                    audioSource = successResult.audioSource,
-                    message = "AudioRecord initialized with source ${successResult.audioSource}"
+                    audioRecordInfo = successResult.audioRecordInfo,
+                    audioSource = successResult.workingAudioSource,
+                    message = "AudioRecord initialized with source ${successResult.workingAudioSource}"
                 )
-            } else {
-                val failedResult = audioRecordResult as AudioRecordResult.Failed
+            }
+            else
+            {
+                val failedResult = recordManagerResult as AudioRecordInitResult.AllSourcesFailed
                 Timber.e("AudioRecord initialization failed for device: ${device.displayName}")
-                Timber.e("Error: ${failedResult.error.message}")
+                Timber.e("Error: ${failedResult.errorMessage}")
 
                 ConnectionInitResult.Failed(
-                    failedResult.error,
-                    "AudioRecord cannot access USB audio device"
+                    AudioRecordException(failedResult.errorMessage),
+                    failedResult.errorMessage
                 )
             }
 
-        } catch (exception: Exception) {
+        }
+        catch (exception: Exception)
+        {
             Timber.e(exception, "Exception during AudioRecord initialization")
             ConnectionInitResult.Failed(
                 exception,
@@ -113,8 +130,12 @@ internal class RealUsbAudioConnection(
         }
     }
 
-    override fun startRecording(): Flow<AudioData> {
-        Timber.d("Starting real audio recording for device: ${device.displayName}")
+    override fun startRecording(): Flow<AudioData>
+    {
+        Timber.d("Starting audio recording for device: ${device.displayName}")
+
+        val recordManager = audioRecordManager ?: throw IllegalStateException("Not initialized")
+        val levelProcessor = audioLevelProcessor ?: throw IllegalStateException("Not initialized")
 
         // Check if already recording
         if (_recordingState.value is RecordingState.Recording) {
@@ -134,37 +155,48 @@ internal class RealUsbAudioConnection(
 
         _recordingState.value = RecordingState.Starting
 
-        return manager.startRecording()
+        return recordManager.startRecording()
             .onStart {
                 _recordingState.value = RecordingState.Recording
-                Timber.i("Real audio recording started for device: ${device.displayName}")
+                Timber.i("Audio recording started for device: ${device.displayName}")
+
+                if (_isPlaybackEnabled.value)
+                {
+                    audioOutputManager?.startPlayback()
+                }
             }
-            .onEach { audioData ->
-                // Update audio level information
-                updateAudioLevel(audioData.samples, audioData.timestamp)
+            .map { rawSamples ->
+                // Process audio levels using levels processor
+                val levelInfo = levelProcessor.processAudioLevel(rawSamples.samples, rawSamples.timestamp)
+                _audioLevel.value = levelInfo
+
+                // Play through speakers if enabled
+                if (_isPlaybackEnabled.value)
+                {
+                    audioOutputManager?.playAudioSamples(rawSamples.samples)
+                }
+
+                // Convert to public AudioData format
+                AudioData(
+                    samples = rawSamples.samples,
+                    timestamp = rawSamples.timestamp,
+                    sampleRate = rawSamples.sampleRate,
+                    channelCount = 1,
+                    sequenceNumber = sequenceNumber.incrementAndGet()
+                )
             }
             .catch { exception ->
-                Timber.e(exception, "Error in audio recording flow")
-                _recordingState.value = RecordingState.Error(
-                    message = "Recording failed: ${exception.message}",
-                    cause = exception
-                )
+                _recordingState.value = RecordingState.Error("Recording failed", exception)
                 throw exception
             }
-            .onCompletion { cause ->
-                _recordingState.value = if (cause == null) {
-                    RecordingState.Stopped
-                } else {
-                    RecordingState.Error(
-                        message = "Recording stopped due to error: ${cause.message}",
-                        cause = cause
-                    )
-                }
-                Timber.d("Real audio recording flow completed")
+            .onCompletion {
+                _recordingState.value = RecordingState.Stopped
             }
+
     }
 
-    override suspend fun stopRecording() {
+    override suspend fun stopRecording()
+    {
         Timber.d("Stopping real audio recording")
 
         if (_recordingState.value !is RecordingState.Recording) {
@@ -198,20 +230,58 @@ internal class RealUsbAudioConnection(
         }
     }
 
-    override fun getAudioLevel(): Flow<AudioLevelInfo> {
+    override fun getAudioLevel(): Flow<AudioLevelInfo>
+    {
         return _audioLevel.asStateFlow()
     }
 
-    override fun getRecordingState(): Flow<RecordingState> {
+    override fun getRecordingState(): Flow<RecordingState>
+    {
         return _recordingState.asStateFlow()
     }
 
-    override suspend fun isDeviceConnected(): Boolean {
+    override suspend fun setPlaybackEnabled(enabled: Boolean)
+    {
+        Timber.d("Setting audio playback enabled: $enabled")
+
+        _isPlaybackEnabled.value = enabled
+
+        if (enabled && _recordingState.value is RecordingState.Recording)
+        {
+            // Start playback if currently recording
+            val started = audioOutputManager?.startPlayback() ?: false
+
+            if (started)
+            {
+                Timber.i("Audio playback enabled during recording")
+            }
+            else
+            {
+                Timber.w("Failed to start audio playback")
+            }
+        }
+        else if (!enabled)
+        {
+            // Stop playback
+            audioOutputManager?.stopPlayback()
+            Timber.i("Audio playback disabled")
+        }
+    }
+
+    override fun getPlaybackEnabled(): Flow<Boolean>
+    {
+        return _isPlaybackEnabled.asStateFlow()
+    }
+
+    override suspend fun isDeviceConnected(): Boolean
+    {
         return isDeviceConnectedInternal()
     }
 
-    private fun isDeviceConnectedInternal(): Boolean {
-        return try {
+    private fun isDeviceConnectedInternal(): Boolean
+    {
+        return try
+        {
             // Check if USB device is still in the system device list
             val currentDevices = usbManager.deviceList
             val deviceStillConnected = currentDevices.containsValue(usbDevice)
@@ -232,12 +302,14 @@ internal class RealUsbAudioConnection(
         }
     }
 
-    override suspend fun disconnect() {
+    override suspend fun disconnect()
+    {
         Timber.d("Disconnecting from real USB audio device: ${device.displayName}")
 
         try {
             // Stop any active recording
-            if (_recordingState.value is RecordingState.Recording) {
+            if (_recordingState.value is RecordingState.Recording)
+            {
                 stopRecording()
             }
 
@@ -339,7 +411,7 @@ internal class RealUsbAudioConnection(
      * Gets detailed information about the AudioRecord configuration
      */
     fun getAudioRecordInfo(): AudioRecordInfo? {
-        return audioRecordManager?.getAudioInfo()
+        return audioRecordManager?.getAudioRecordInfo()
     }
 
     /**

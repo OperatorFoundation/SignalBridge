@@ -2,6 +2,8 @@ package org.operatorfoundation.signalbridge
 
 import android.content.Context
 import kotlinx.coroutines.flow.Flow
+import org.operatorfoundation.signalbridge.internal.AudioRecordDiagnostics
+import org.operatorfoundation.signalbridge.internal.AudioRecordInfo
 import org.operatorfoundation.signalbridge.internal.UsbAudioManagerImpl
 import org.operatorfoundation.signalbridge.models.ConnectionStatus
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
@@ -67,6 +69,11 @@ interface UsbAudioManager
      */
     suspend fun cleanup()
 
+    /**
+     * Runs diagnostic tests on connected device
+     */
+    suspend fun getAudioRecordDiagnostics(device: UsbAudioDevice): AudioRecordDiagnostics
+
     companion object
     {
         /**
@@ -81,3 +88,11 @@ interface UsbAudioManager
         }
     }
 }
+
+data class DiagnosticResult(
+    val deviceName: String,
+    val isCompatible: Boolean,
+    val summary: String,
+    val audioRecordInfo: AudioRecordInfo?,
+    val errorMessage: String? = null
+)

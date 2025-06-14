@@ -77,6 +77,16 @@ interface UsbAudioConnection
     suspend fun isDeviceConnected(): Boolean
 
     /**
+     * Enables or disables audio playback through phone speakers
+     */
+    suspend fun setPlaybackEnabled(enabled: Boolean)
+
+    /**
+     * Gets the current playback enabled state
+     */
+    fun getPlaybackEnabled(): Flow<Boolean>
+
+    /**
      * Disconnects from the USB audio device.
      *
      * This will stop any active recording, release all audio resources,

@@ -24,7 +24,7 @@ import timber.log.Timber
  *
  * @property context Application context for accessing system services
  */
-class UsbAudioManagerImpl(private val context: Context) : UsbAudioManager
+internal class UsbAudioManagerImpl(private val context: Context) : UsbAudioManager
 {
     private val usbManager: UsbManager by lazy {
         context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -205,7 +205,7 @@ class UsbAudioManagerImpl(private val context: Context) : UsbAudioManager
      * Get diagnostic information about AudioRecord compatibility
      */
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
-    suspend fun getAudioRecordDiagnostics(device: UsbAudioDevice): AudioRecordDiagnostics
+    override suspend fun getAudioRecordDiagnostics(device: UsbAudioDevice): AudioRecordDiagnostics
     {
         Timber.d("Running AudioRecord diagnostics for device: ${device.displayName}")
 
@@ -218,20 +218,20 @@ class UsbAudioManagerImpl(private val context: Context) : UsbAudioManager
         }
 
         // Test AudioRecord initialization
-        val audioRecordManager = UsbAudioRecordManager(usbDevice)
-        val result = audioRecordManager.initializeAudioRecord()
+        val audioRecordManager = AudioRecordManager()
+        val result = audioRecordManager.initialize()
 
         return AudioRecordDiagnostics(
             deviceId = device.deviceId,
             deviceName = device.displayName,
             hasPermission = true,
             audioRecordResult = result,
-            audioRecordInfo = audioRecordManager.getAudioInfo(),
+            audioRecordInfo = audioRecordManager.getAudioRecordInfo(),
             timestamp = System.currentTimeMillis()
         )
     }
-
 }
+
 
 /**
  * Diagnostic information for AudioRecord compatibility testing
@@ -240,7 +240,7 @@ data class AudioRecordDiagnostics(
     val deviceId: Int,
     val deviceName: String,
     val hasPermission: Boolean,
-    val audioRecordResult: AudioRecordResult?,
+    val audioRecordResult: AudioRecordInitResult?,
     val audioRecordInfo: AudioRecordInfo?,
     val errorMessage: String? = null,
     val timestamp: Long
@@ -254,7 +254,7 @@ data class AudioRecordDiagnostics(
         {
             !hasPermission -> "No permission for device"
             audioRecordResult?.isSuccess == true -> "Compatible - AudioRecord initialized successfully"
-            else -> "Incompatible - ${audioRecordResult?.error?.message ?: "Unknown error"}"
+            else -> "Incompatible - ${audioRecordResult?.errorMessage ?: "Unknown error"}"
         }
 
     companion object
