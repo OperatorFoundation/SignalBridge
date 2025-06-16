@@ -372,67 +372,149 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     {
         viewModelScope.launch {
             try {
-                _uiState.update { it.copy(errorMessage = "Testing system audio...") }
+                _uiState.update { it.copy(errorMessage = "Creating test tone...") }
 
-                // Generate 1 second of 440Hz sine wave
                 val sampleRate = 48000
-                val samples = ShortArray(sampleRate) // 1 second
-                val frequency = 440.0 // A4 note
+                val durationSeconds = 1.0
+                val frequency = 440.0
+                val amplitude = 0.3
 
-                for (i in samples.indices) {
-                    val time = i.toDouble() / sampleRate
-                    val amplitude = (sin(2 * PI * frequency * time) * Short.MAX_VALUE * 0.3).toInt()
-                    samples[i] = amplitude.toShort()
-                }
-
-                // Check minimum buffer size first
+                // Calculate buffer size
                 val minBufferSize = AudioTrack.getMinBufferSize(
                     sampleRate,
                     AudioFormat.CHANNEL_OUT_MONO,
                     AudioFormat.ENCODING_PCM_16BIT
                 )
 
-                if (minBufferSize == AudioTrack.ERROR || minBufferSize == AudioTrack.ERROR_BAD_VALUE) {
-                    _uiState.update { it.copy(errorMessage = "Invalid audio configuration for system test") }
-                    return@launch
-                }
+                val bufferSize = maxOf(minBufferSize, 8192)
 
-                // Use the larger of minBufferSize or our sample size
-                val bufferSize = maxOf(minBufferSize, samples.size * 2) // *2 for 16-bit samples
-
-                // Create a temporary AudioTrack to test system audio directly
+                // Create AudioTrack
                 val audioTrack = AudioTrack(
                     AudioManager.STREAM_MUSIC,
                     sampleRate,
                     AudioFormat.CHANNEL_OUT_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,
                     bufferSize,
-                    AudioTrack.MODE_STREAM // Try STREAM mode instead of STATIC
+                    AudioTrack.MODE_STREAM
                 )
 
                 if (audioTrack.state == AudioTrack.STATE_INITIALIZED) {
-                    audioTrack.play()
-                    val written = audioTrack.write(samples, 0, samples.size)
+                    _uiState.update { it.copy(errorMessage = "Playing 440Hz tone...") }
 
-                    _uiState.update { it.copy(errorMessage = "Playing test tone... written $written samples") }
+                    // Start playback
+                    audioTrack.play()
+
+                    // Generate and write tone in chunks
+                    val chunkSize = 4800 // 0.1 seconds worth
+                    val totalSamples = (sampleRate * durationSeconds).toInt()
+                    var samplesWritten = 0
+
+                    while (samplesWritten < totalSamples) {
+                        val remainingSamples = totalSamples - samplesWritten
+                        val currentChunkSize = minOf(chunkSize, remainingSamples)
+                        val chunk = ShortArray(currentChunkSize)
+
+                        for (i in 0 until currentChunkSize) {
+                            val sampleIndex = samplesWritten + i
+                            val time = sampleIndex.toDouble() / sampleRate
+                            val sample = (sin(2 * PI * frequency * time) * Short.MAX_VALUE * amplitude).toInt()
+                            chunk[i] = sample.toShort()
+                        }
+
+                        val written = audioTrack.write(chunk, 0, chunk.size)
+                        if (written < 0) {
+                            _uiState.update { it.copy(errorMessage = "AudioTrack write error: $written") }
+                            break
+                        }
+
+                        samplesWritten += written
+                        kotlinx.coroutines.delay(50) // Small delay between chunks
+                    }
 
                     // Wait for playback to finish
-                    kotlinx.coroutines.delay(1200)
+                    kotlinx.coroutines.delay(200)
 
                     audioTrack.stop()
                     audioTrack.release()
 
-                    _uiState.update { it.copy(errorMessage = "System audio test completed - did you hear a beep?") }
+                    _uiState.update { it.copy(errorMessage = "Test tone complete! Did you hear 440Hz beep?") }
+
                 } else {
-                    _uiState.update { it.copy(errorMessage = "System AudioTrack failed - state: ${audioTrack.state}, minBuffer: $minBufferSize") }
+                    _uiState.update { it.copy(errorMessage = "AudioTrack init failed: ${audioTrack.state}") }
                     audioTrack.release()
                 }
 
             } catch (e: Exception) {
-                _uiState.update { it.copy(errorMessage = "Audio test exception: ${e.message}") }
+                _uiState.update { it.copy(errorMessage = "Test failed: ${e.message}") }
             }
         }
     }
+
+//    fun testSystemAudio()
+//    {
+//        viewModelScope.launch {
+//            try {
+//                _uiState.update { it.copy(errorMessage = "Testing system audio...") }
+//
+//                // Generate 1 second of 440Hz sine wave
+//                val sampleRate = 48000
+//                val samples = ShortArray(sampleRate) // 1 second
+//                val frequency = 440.0 // A4 note
+//
+//                for (i in samples.indices) {
+//                    val time = i.toDouble() / sampleRate
+//                    val amplitude = (sin(2 * PI * frequency * time) * Short.MAX_VALUE * 0.3).toInt()
+//                    samples[i] = amplitude.toShort()
+//                }
+//
+//                // Check minimum buffer size first
+//                val minBufferSize = AudioTrack.getMinBufferSize(
+//                    sampleRate,
+//                    AudioFormat.CHANNEL_OUT_MONO,
+//                    AudioFormat.ENCODING_PCM_16BIT
+//                )
+//
+//                if (minBufferSize == AudioTrack.ERROR || minBufferSize == AudioTrack.ERROR_BAD_VALUE) {
+//                    _uiState.update { it.copy(errorMessage = "Invalid audio configuration for system test") }
+//                    return@launch
+//                }
+//
+//                // Use the larger of minBufferSize or our sample size
+//                val bufferSize = maxOf(minBufferSize, samples.size * 2) // *2 for 16-bit samples
+//
+//                // Create a temporary AudioTrack to test system audio directly
+//                val audioTrack = AudioTrack(
+//                    AudioManager.STREAM_MUSIC,
+//                    sampleRate,
+//                    AudioFormat.CHANNEL_OUT_MONO,
+//                    AudioFormat.ENCODING_PCM_16BIT,
+//                    bufferSize,
+//                    AudioTrack.MODE_STREAM // Try STREAM mode instead of STATIC
+//                )
+//
+//                if (audioTrack.state == AudioTrack.STATE_INITIALIZED) {
+//                    audioTrack.play()
+//                    val written = audioTrack.write(samples, 0, samples.size)
+//
+//                    _uiState.update { it.copy(errorMessage = "Playing test tone... written $written samples") }
+//
+//                    // Wait for playback to finish
+//                    kotlinx.coroutines.delay(1200)
+//
+//                    audioTrack.stop()
+//                    audioTrack.release()
+//
+//                    _uiState.update { it.copy(errorMessage = "System audio test completed - did you hear a beep?") }
+//                } else {
+//                    _uiState.update { it.copy(errorMessage = "System AudioTrack failed - state: ${audioTrack.state}, minBuffer: $minBufferSize") }
+//                    audioTrack.release()
+//                }
+//
+//            } catch (e: Exception) {
+//                _uiState.update { it.copy(errorMessage = "Audio test exception: ${e.message}") }
+//            }
+//        }
+//    }
 
     // Clear error message
     fun clearError() {
