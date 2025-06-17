@@ -17,13 +17,31 @@ A Kotlin library for USB audio input on Android devices, built with coroutines a
 - **Permissions**: `android.permission.RECORD_AUDIO`
 - **Hardware**: USB host mode support, USB audio device
 
-## Installation
+## Installation (Pre-release)
 
-Add to your `build.gradle.kts`:
+⚠️ **This is a pre-release version** - APIs may change during active development.
+
+### Step 1: Add JitPack Repository
+
+In your project's `settings.gradle.kts`:
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
+```
+
+### Step 2: Add Dependency
+
+Latest development version:
 
 ```kotlin
 dependencies {
-    implementation("org.operatorfoundation:signalbridge:1.0.0")
+    implementation("com.github.OperatorFoundation.SignalBridgeDemo:SignalBridge:main-SNAPSHOT")
 }
 ```
 

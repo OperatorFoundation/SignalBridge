@@ -1,4 +1,4 @@
-package org.operatorfoundation.signalbridgedemo.ui.theme
+package org.operatorfoundation.signalbridge.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

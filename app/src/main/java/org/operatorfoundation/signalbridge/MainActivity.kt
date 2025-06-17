@@ -1,4 +1,4 @@
-package org.operatorfoundation.signalbridgedemo
+package org.operatorfoundation.signalbridge
 
 import android.Manifest
 import android.os.Bundle
@@ -27,7 +27,7 @@ import org.operatorfoundation.signalbridge.models.ConnectionStatus.Connecting
 import org.operatorfoundation.signalbridge.models.ConnectionStatus.Disconnected
 import org.operatorfoundation.signalbridge.models.RecordingState
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
-import org.operatorfoundation.signalbridgedemo.ui.theme.SignalBridgeDemoTheme
+import org.operatorfoundation.signalbridge.ui.theme.SignalBridgeDemoTheme
 import timber.log.Timber
 
 /**

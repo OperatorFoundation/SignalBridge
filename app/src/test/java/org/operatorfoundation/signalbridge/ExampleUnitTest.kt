@@ -1,4 +1,4 @@
-package org.operatorfoundation.signalbridgedemo
+package org.operatorfoundation.signalbridge
 
 import org.junit.Test
 

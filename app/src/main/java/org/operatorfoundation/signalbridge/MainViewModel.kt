@@ -1,4 +1,4 @@
-package org.operatorfoundation.signalbridgedemo
+package org.operatorfoundation.signalbridge
 
 import android.app.Application
 import android.media.AudioFormat
@@ -6,8 +6,6 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import org.operatorfoundation.signalbridge.UsbAudioConnection
-import org.operatorfoundation.signalbridge.UsbAudioManager
 import org.operatorfoundation.signalbridge.exceptions.UsbAudioException
 import org.operatorfoundation.signalbridge.models.*
 import kotlinx.coroutines.flow.*

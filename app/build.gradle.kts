@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "org.operatorfoundation.signalbridgedemo"
+    namespace = "org.operatorfoundation.signalbridge"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "org.operatorfoundation.signalbridgedemo"
+        applicationId = "org.operatorfoundation.signalbridge"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
