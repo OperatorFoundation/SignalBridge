@@ -17,7 +17,7 @@ class AudioCapabilitiesTests
 
         // Then
         assertTrue(48000 in capabilities.supportedSampleRates)
-        assertTrue(44100 in capabilities.supportedSampleRates)
+        assertTrue(12000 in capabilities.supportedSampleRates)
         assertTrue(1 in capabilities.supportedChannelCounts)
         assertTrue(16 in capabilities.supportedBitDepths)
         assertTrue(capabilities.supportsInput)
@@ -30,8 +30,7 @@ class AudioCapabilitiesTests
         val capabilities = AudioCapabilities.createDefault()
 
         // When & Then
-        assertTrue(capabilities.supportsConfiguration(48000, 1, 16))
-        assertTrue(capabilities.supportsConfiguration(44100, 2, 16))
+        assertTrue(capabilities.supportsConfiguration(12000, 1, 16))
     }
 
     @Test

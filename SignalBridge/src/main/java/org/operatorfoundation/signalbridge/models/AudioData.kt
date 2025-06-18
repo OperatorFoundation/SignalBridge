@@ -8,7 +8,7 @@ import kotlinx.parcelize.Parcelize
  *
  * @property samples Raw audio samples as 16-bit signed integers
  * @property timestamp System timestamp when the audio was captured (in milliseconds)
- * @property sampleRate Sample rate of the audio data (typically 48000 Hz)
+ * @property sampleRate Sample rate of the audio data (typically 12000 Hz)
  * @property channelCount Number of audio channels (typically 1 for mono)
  * @property sequenceNumber Sequential number for this audio buffer (for tracking continuity)
  */
@@ -24,7 +24,7 @@ data class AudioData(
     {
         const val MONO_CHANNEL_COUNT = 1
         const val STEREO_CHANNEL_COUNT = 2
-        const val DEFAULT_SAMPLE_RATE = 48000
+        const val DEFAULT_SAMPLE_RATE = 12000
         const val BITS_PER_SAMPLE = 16
     }
 

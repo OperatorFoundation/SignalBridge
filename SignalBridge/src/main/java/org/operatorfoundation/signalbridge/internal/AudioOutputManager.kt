@@ -28,7 +28,7 @@ internal class AudioOutputManager
     {
         // Audio output configuration - matched input configuration for consistency
         // TODO: Consider moving this to a constants file for single source of truth fgor I/O
-        private const val SAMPLE_RATE = 48000
+        private const val SAMPLE_RATE = 12000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_OUT_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val DEFAULT_BUFFER_SIZE = 8192
@@ -308,10 +308,10 @@ internal class AudioOutputManager
     {
         try {
             // Generate a simple test tone
-            val testSamples = ShortArray(4800) // 0.1 seconds at 48kHz
+            val testSamples = ShortArray(SAMPLE_RATE) // 0.1 seconds at 12kHz
             for (i in testSamples.indices)
             {
-                val time = i.toDouble() / 48000
+                val time = i.toDouble() / SAMPLE_RATE
                 val amplitude = (sin(2 * PI * 440.0 * time) * Short.MAX_VALUE * 0.3).toInt()
                 testSamples[i] = amplitude.toShort()
             }

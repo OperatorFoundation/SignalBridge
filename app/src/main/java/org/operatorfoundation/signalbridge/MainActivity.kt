@@ -1,20 +1,25 @@
 package org.operatorfoundation.signalbridge
 
 import android.Manifest
+import android.R
 import android.os.Bundle
+import android.view.Surface
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -144,13 +149,33 @@ fun MainScreen(viewModel: MainViewModel)
                         )
                     }
 
-                    //  Add diagnostic section
                     item {
-                        DiagnosticSection(
-                            onRunDiagnostics = { viewModel.runAudioRecordDiagnostics() },
-                            onTestSystemAudio = { viewModel.testSystemAudio() }
+                        WsprSection(
+                            isRecording = uiState.recordingState is RecordingState.Recording,
+                            onEncodeWspr = { callsign, grid, power ->
+                                viewModel.encodeWSPR(callsign, grid, power)
+                            },
+                            onDecodeWspr = { viewModel.decodeWSPR() }
                         )
                     }
+                }
+
+                // WSPR Results
+                if (uiState.wsprResults.isNotEmpty())
+                {
+                    item {
+                        WsprResultsCard(
+                            results = uiState.wsprResults,
+                            onDismiss = { viewModel.clearWSPRResults() }
+                        )
+                    }
+                }
+
+                item {
+                    DiagnosticSection(
+                        onRunDiagnostics = { viewModel.runAudioRecordDiagnostics() },
+                        onTestSystemAudio = { viewModel.testSystemAudio() }
+                    )
                 }
 
                 //  Display diagnostic results
@@ -491,7 +516,8 @@ fun AudioControlSection(
  * Display component for audio level visualization.
  */
 @Composable
-fun AudioLevelDisplay(level: AudioLevelInfo) {
+fun AudioLevelDisplay(level: AudioLevelInfo)
+{
     Column(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -532,7 +558,8 @@ fun LevelBar(
     label: String,
     level: Float,
     color: Color
-) {
+)
+{
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -674,6 +701,213 @@ fun DiagnosticResultsCard(
                     color = Color.Red
                 )
             }
+        }
+    }
+}
+
+
+/**
+ * WSPR Section
+ */
+@Composable
+fun WsprSection(
+    isRecording: Boolean,
+    onEncodeWspr: (String, String, Int) -> Unit,
+    onDecodeWspr: () -> Unit
+)
+{
+    var callsign by remember { mutableStateOf("K1JT") }
+    var gridSquare by remember { mutableStateOf("FN20") }
+    var power by remember { mutableStateOf("30") }
+
+    Card(modifier = Modifier.fillMaxWidth())
+    {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        )
+        {
+            Text(
+                text = "📻 WSPR Signal Processing",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                text = "Generate and decode WSPR (Weak Signal Propagation Reporter) signals",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // WSPR Parameters
+            OutlinedTextField(
+                value = callsign,
+                onValueChange = { callsign = it.uppercase() },
+                label = { Text("Callsign") },
+                placeholder = { Text("K1JT") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = gridSquare,
+                onValueChange = { gridSquare = it.uppercase() },
+                label = { Text("Grid Square") },
+                placeholder = { Text("FN20") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = power,
+                onValueChange = { power = it },
+                label = { Text("Power (dBm)") },
+                placeholder = { Text("30") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // WSPR Actions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            )
+            {
+                Button(
+                    onClick = {
+                        val powerInt = power.toIntOrNull() ?: 30
+                        onEncodeWspr(callsign, gridSquare, powerInt)
+                    },
+                    enabled = callsign.isNotBlank() && gridSquare.isNotBlank(),
+                    modifier = Modifier.weight(1f)
+                )
+                {
+                    Text("🎵 Generate WSPR")
+                }
+
+                Button(
+                    onClick = onDecodeWspr,
+                    enabled = isRecording,
+                    modifier = Modifier.weight(1f)
+                )
+                {
+                    Text("🔍 Decode WSPR")
+                }
+            }
+
+            if (!isRecording)
+            {
+                Text(
+                    text = "💡 Start recording to decode WSPR signals from your USB audio device",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Displays WSPR Results.
+ */
+@Composable
+fun WsprResultsCard(
+    results: List<WSPRDecodeResult>,
+    onDismiss: () -> Unit
+)
+{
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (results.isNotEmpty())
+            {
+                Color.Green.copy(alpha = 0.1f)
+            }
+            else
+            {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    )
+    {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        )
+        {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            )
+            {
+                Text(
+                    text = "WSPR Decode Results",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                TextButton(onClick = onDismiss)
+                {
+                    Text("Dismiss")
+                }
+            }
+        }
+
+        if (results.isEmpty())
+        {
+            Text(
+                text = "No WSPR signals decoded",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        else
+        {
+            Text(
+                text = "📡 Decoded ${results.size} WSPR signal${if (results.size != 1) "s" else ""}:",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = Color.Green
+            )
+
+            results.forEach { result ->
+                WSPRMessageItem(result)
+            }
+        }
+    }
+}
+
+@Composable
+fun WSPRMessageItem(result: WSPRDecodeResult)
+{
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.small
+    )
+    {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        )
+        {
+            Text(
+                text = "${result.callsign} - ${ result.gridSquare }",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Text(
+                text = "Power: ${result.power} dBm | SNR: ${result.snr} dB",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Text(
+                text = "Freq: ${result.frequency} Hz | Message: ${result.message}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

@@ -134,7 +134,7 @@ interface UsbAudioConnection {
 data class AudioData(
     val samples: ShortArray,      // 16-bit audio samples
     val timestamp: Long,          // System timestamp (ms)
-    val sampleRate: Int,          // 48000 Hz
+    val sampleRate: Int,          // 12000 Hz
     val channelCount: Int,        // 1 (mono)
     val sequenceNumber: Long      // Buffer sequence number
 )
@@ -225,7 +225,7 @@ try {
 
 The library uses these audio settings:
 
-- **Sample Rate**: 48 kHz
+- **Sample Rate**: 12 kHz
 - **Bit Depth**: 16-bit
 - **Channels**: Mono (1 channel)
 - **Format**: PCM signed integers

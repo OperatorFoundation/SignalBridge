@@ -29,7 +29,7 @@ internal class MockUsbDeviceDiscovery
             vendorId = 0x1397,
             productId = 0x0507,
             capabilities = AudioCapabilities(
-                supportedSampleRates = listOf(48000, 96000),
+                supportedSampleRates = listOf(12000, 48000, 96000),
                 supportedChannelCounts = listOf(1, 2),
                 supportedBitDepths = listOf(16, 24),
                 maxLatencyMs = 20,

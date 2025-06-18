@@ -16,7 +16,7 @@ data class AudioCapabilities(
     companion object
     {
         fun createDefault(): AudioCapabilities = AudioCapabilities(
-            supportedSampleRates = listOf(48000, 44100),
+            supportedSampleRates = listOf(12000, 48000),
             supportedChannelCounts = listOf(1, 2),
             supportedBitDepths = listOf(16),
             maxLatencyMs = 50,

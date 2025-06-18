@@ -6,13 +6,19 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import org.operatorfoundation.signalbridge.exceptions.UsbAudioException
-import org.operatorfoundation.signalbridge.models.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import timber.log.Timber
 import kotlin.math.PI
 import kotlin.math.sin
+
+import timber.log.Timber
+
+import org.operatorfoundation.signalbridge.exceptions.UsbAudioException
+import org.operatorfoundation.signalbridge.models.*
+import org.operatorfoundation.audiocoder.CJarInterface
+import org.operatorfoundation.audiocoder.WSPRMessage
+import org.operatorfoundation.signalbridge.internal.RawAudioSamples
+
 
 /**
  * ViewModel for the main demo activity.
@@ -21,8 +27,8 @@ import kotlin.math.sin
  * and recording operations. It serves as the business logic layer between
  * the UI and the USB Audio Library.
  */
-class MainViewModel(application: Application) : AndroidViewModel(application) {
-
+class MainViewModel(application: Application) : AndroidViewModel(application)
+{
     // USB Audio Library components
     private val audioManager: UsbAudioManager = UsbAudioManager.create(application)
     private var currentConnection: UsbAudioConnection? = null
@@ -448,72 +454,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-//    fun testSystemAudio()
-//    {
-//        viewModelScope.launch {
-//            try {
-//                _uiState.update { it.copy(errorMessage = "Testing system audio...") }
-//
-//                // Generate 1 second of 440Hz sine wave
-//                val sampleRate = 48000
-//                val samples = ShortArray(sampleRate) // 1 second
-//                val frequency = 440.0 // A4 note
-//
-//                for (i in samples.indices) {
-//                    val time = i.toDouble() / sampleRate
-//                    val amplitude = (sin(2 * PI * frequency * time) * Short.MAX_VALUE * 0.3).toInt()
-//                    samples[i] = amplitude.toShort()
-//                }
-//
-//                // Check minimum buffer size first
-//                val minBufferSize = AudioTrack.getMinBufferSize(
-//                    sampleRate,
-//                    AudioFormat.CHANNEL_OUT_MONO,
-//                    AudioFormat.ENCODING_PCM_16BIT
-//                )
-//
-//                if (minBufferSize == AudioTrack.ERROR || minBufferSize == AudioTrack.ERROR_BAD_VALUE) {
-//                    _uiState.update { it.copy(errorMessage = "Invalid audio configuration for system test") }
-//                    return@launch
-//                }
-//
-//                // Use the larger of minBufferSize or our sample size
-//                val bufferSize = maxOf(minBufferSize, samples.size * 2) // *2 for 16-bit samples
-//
-//                // Create a temporary AudioTrack to test system audio directly
-//                val audioTrack = AudioTrack(
-//                    AudioManager.STREAM_MUSIC,
-//                    sampleRate,
-//                    AudioFormat.CHANNEL_OUT_MONO,
-//                    AudioFormat.ENCODING_PCM_16BIT,
-//                    bufferSize,
-//                    AudioTrack.MODE_STREAM // Try STREAM mode instead of STATIC
-//                )
-//
-//                if (audioTrack.state == AudioTrack.STATE_INITIALIZED) {
-//                    audioTrack.play()
-//                    val written = audioTrack.write(samples, 0, samples.size)
-//
-//                    _uiState.update { it.copy(errorMessage = "Playing test tone... written $written samples") }
-//
-//                    // Wait for playback to finish
-//                    kotlinx.coroutines.delay(1200)
-//
-//                    audioTrack.stop()
-//                    audioTrack.release()
-//
-//                    _uiState.update { it.copy(errorMessage = "System audio test completed - did you hear a beep?") }
-//                } else {
-//                    _uiState.update { it.copy(errorMessage = "System AudioTrack failed - state: ${audioTrack.state}, minBuffer: $minBufferSize") }
-//                    audioTrack.release()
-//                }
-//
-//            } catch (e: Exception) {
-//                _uiState.update { it.copy(errorMessage = "Audio test exception: ${e.message}") }
-//            }
-//        }
-//    }
-
     // Clear error message
     fun clearError() {
         _uiState.update { it.copy(errorMessage = null) }
@@ -598,6 +538,186 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // MARK: WSPR Functions
+    /**
+     * Generates a WSPR Signal and plays it through the phone speakers.
+     *
+     * TODO: Communication over USB to a device.
+     */
+    fun encodeWSPR(callsign: String, gridSquare: String, power: Int)
+    {
+        viewModelScope.launch {
+            try
+            {
+                _uiState.update { it.copy(errorMessage = "Generating WSPR signal...") }
+
+                // Generate WSPR signal using AudioCoder library
+                val wsprAudioData = CJarInterface.WSPREncodeToPCM(
+                    callsign,
+                    gridSquare,
+                    power,
+                    0, // No offset
+                    false // Not LSB mode
+                )
+
+                if (wsprAudioData != null && wsprAudioData.isNotEmpty())
+                {
+                    // Convert byte array to ShortArray for playback
+                    val samples = convertBytesToShorts(wsprAudioData)
+
+                    // Play through current connection if available
+                    val connection = currentConnection
+                    if (connection != null)
+                    {
+                        // Enable playback if not already enabled
+                        if (!_uiState.value.isPlaybackEnabled)
+                        {
+                            connection.setPlaybackEnabled(true)
+                        }
+
+                        // Play the WSPR signal
+                        // TODO: This is just for testing, we need to send this to the USB device
+                        playWsprAudio(samples)
+
+                        _uiState.update {
+                            it.copy(errorMessage = "WSPR signal generated: $callsign $gridSquare ${power}dBm")
+                        }
+                    }
+                    else
+                    {
+                        _uiState.update { it.copy(errorMessage = "No USB audio connection for WSPR playback") }
+                    }
+                }
+                else
+                {
+                    _uiState.update { it.copy(errorMessage = "Failed to generate WSPR signal") }
+
+                }
+            }
+            catch (exception: Exception)
+            {
+                Timber.e(exception, "Error generating WSPR signal")
+                _uiState.update {
+                    it.copy(errorMessage = "WSPR generation failed: ${exception.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Decodes WSPR Signals from recent audio data.
+     */
+    fun decodeWSPR()
+    {
+        viewModelScope.launch {
+            try
+            {
+                _uiState.update { it.copy(errorMessage = "Analyzing audio for WSPR signals...") }
+
+                // TODO: This is for testing, we should collect data over time
+                val recentAudioData = collectRecentAudioData()
+
+                if (recentAudioData.isNotEmpty())
+                {
+                    // Convert to byte array for AudioCoder
+                    val audioBytes = convertShortsToBytes(recentAudioData)
+
+                    // Decode WSPR signals
+                    val wsprMessages = CJarInterface.WSPRDecodeFromPcm(
+                        audioBytes,
+                        14.097, // Typical WSPR frequency (20m band)
+                        false // Not LSB
+                    )
+
+                    // Convert to UI friendly format
+                    val results = wsprMessages?.map { msg ->
+                        WSPRDecodeResult(
+                            callsign = msg.callsign ?: "Uknown",
+                            gridSquare = msg.gridsquare ?: "Unknown",
+                            power = msg.power,
+                            snr = msg.snr,
+                            frequency = msg.freq,
+                            message = msg.msg
+                        )
+                    } ?: emptyList()
+
+                    _uiState.update {
+                        it.copy(
+                            wsprResults = results,
+                            errorMessage = if (results.isNotEmpty())
+                            {
+                                "Decoded ${results.size} WSPR signal(s)"
+                            }
+                            else
+                            {
+                                "No WSPR signals found."
+                            }
+                        )
+                    }
+                }
+                else
+                {
+                    _uiState.update { it.copy(errorMessage = "No audio data available for WSPR decode") }
+                }
+            }
+            catch (exception: Exception)
+            {
+                Timber.e(exception, "Error decoding WSPR signals")
+                _uiState.update {
+                    it.copy(errorMessage = "WSPR decode failed: ${exception.message}")
+                }
+            }
+        }
+    }
+
+    // TODO: Move helper functions to AudioCoder or SignalWave library
+    private fun convertBytesToShorts(bytes: ByteArray): ShortArray
+    {
+        val shorts = ShortArray(bytes.size / 2)
+        for (i in shorts.indices)
+        {
+            val byte1 = bytes[i * 2].toInt() and 0xFF
+            val byte2 = bytes[i * 2 + 1].toInt() and 0xFF
+            shorts[i] = ((byte2 shl 8) or byte1).toShort()
+        }
+
+        return shorts
+    }
+
+    private fun convertShortsToBytes(shorts: ShortArray): ByteArray
+    {
+        val bytes = ByteArray(shorts.size * 2)
+        for (i in shorts.indices)
+        {
+            val short = shorts[i].toInt()
+            bytes[i * 2] = (short and 0xFF).toByte()
+            bytes[i * 2 + 1] = ((short shr 8) and 0xFF).toByte()
+        }
+
+        return bytes
+    }
+
+    /**
+     * Buffers audio data over time and returns recent samples for analysis
+     */
+    private fun collectRecentAudioData(): ShortArray
+    {
+        // TODO: Implementation
+        return ShortArray(0)
+    }
+
+    private suspend fun playWsprAudio(samples: ShortArray)
+    {
+        // TODO: Implementation, play audio through AudioOutputManager
+    }
+
+    /**
+     * Clears WSPR results
+     */
+    fun clearWSPRResults() {
+        _uiState.update { it.copy(wsprResults = emptyList()) }
+    }
+
     /**
      * Cleans up resources when the ViewModel is destroyed.
      */
@@ -629,6 +749,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 }
 
 /**
+ * WSPR Decode result for UI.
+ */
+data class WSPRDecodeResult(
+    val callsign: String,
+    val gridSquare: String,
+    val power: Int,
+    val snr: Float,
+    val frequency: Double,
+    val message: String
+)
+
+/**
  * UI state data class containing all the information needed by the UI.
  */
 data class MainUiState(
@@ -639,5 +771,10 @@ data class MainUiState(
     val isPlaybackEnabled: Boolean = false,
     val audioLevel: AudioLevelInfo? = null,
     val errorMessage: String? = null,
-    val diagnosticResults: String? = null  // Add diagnostic results
+    val diagnosticResults: String? = null,
+    val wsprLevel: AudioLevelInfo? = null,
+    val wsprResults: List<WSPRDecodeResult> = emptyList()
 )
+
+
+

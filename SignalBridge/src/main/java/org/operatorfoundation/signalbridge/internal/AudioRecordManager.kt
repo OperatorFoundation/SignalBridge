@@ -34,7 +34,7 @@ internal class AudioRecordManager
     companion object
     {
         // Audio configuration constants
-        private const val SAMPLE_RATE = 48000
+        private const val SAMPLE_RATE = 12000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val BUFFER_SIZE_MULTIPLIER = 4

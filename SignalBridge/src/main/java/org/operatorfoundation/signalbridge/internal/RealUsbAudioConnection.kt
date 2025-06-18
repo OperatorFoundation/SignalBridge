@@ -78,10 +78,10 @@ internal class RealUsbAudioConnection(
         return try
         {
             // Validate device configuration
-            if (!device.capabilities.supportsConfiguration(48000, 1, 16))
+            if (!device.capabilities.supportsConfiguration(12000, 1, 16))
             {
                 return ConnectionInitResult.Failed(
-                    UnsupportedAudioConfigurationException(48000, 1, 16),
+                    UnsupportedAudioConfigurationException(12000, 1, 16),
                     "Device does not support required audio configuration"
                 )
             }
@@ -149,7 +149,7 @@ internal class RealUsbAudioConnection(
 
         val manager = audioRecordManager
             ?: throw AudioRecordInitializationException(
-                0, 48000,
+                0, 12000,
                 cause = IllegalStateException("AudioRecord manager not initialized")
             )
 

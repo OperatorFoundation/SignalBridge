@@ -217,7 +217,7 @@ internal class UsbDeviceDiscovery(private val context: Context, private val usbM
         // TODO: Parse actual USB audio descriptors
 
         val isHighQualityDevice = isHighQualityAudioDevice(device)
-        val defaultSampleRates = listOf(48000, 44100)
+        val defaultSampleRates = listOf(12000, 48000, 44100)
         val highQualitySampleRates = defaultSampleRates + listOf(96000, 192000)
         val defaultChannelCounts = listOf(1, 2)
         val highQualityChannelCounts = defaultChannelCounts + listOf(4, 8)
