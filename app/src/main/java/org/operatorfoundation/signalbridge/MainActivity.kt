@@ -2,6 +2,7 @@ package org.operatorfoundation.signalbridge
 
 import android.Manifest
 import android.R
+import android.content.Context
 import android.os.Bundle
 import android.view.Surface
 import androidx.activity.ComponentActivity
@@ -34,6 +35,7 @@ import org.operatorfoundation.signalbridge.models.RecordingState
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import org.operatorfoundation.signalbridge.ui.theme.SignalBridgeDemoTheme
 import timber.log.Timber
+import java.io.File
 
 /**
  * Main activity for the USB Audio Library demo application.
@@ -54,7 +56,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SignalBridgeDemoTheme {
-                MainScreen(viewModel = viewModel)
+                MainScreen(viewModel = viewModel, context = this)
             }
         }
     }
@@ -71,7 +73,7 @@ class MainActivity : ComponentActivity() {
  */
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel)
+fun MainScreen(viewModel: MainViewModel, context: Context)
 {
     // Request audio recording permission
     val audioPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
@@ -85,6 +87,24 @@ fun MainScreen(viewModel: MainViewModel)
         if (!audioPermissionState.status.isGranted)
         {
             audioPermissionState.launchPermissionRequest()
+        }
+    }
+
+    // Handle pending share intent
+    uiState.pendingShareIntent?.let { shareIntent ->
+        LaunchedEffect(shareIntent) {
+            try
+            {
+                context.startActivity(shareIntent)
+            }
+            catch (e: Exception)
+            {
+                // Handle error
+            }
+            finally
+            {
+                viewModel.clearPendingShare()
+            }
         }
     }
 
@@ -137,7 +157,8 @@ fun MainScreen(viewModel: MainViewModel)
                     )
                 }
 
-                if (uiState.connectedDevice != null) {
+                if (uiState.connectedDevice != null)
+                {
                     item {
                         AudioControlSection(
                             recordingState = uiState.recordingState,
@@ -152,10 +173,12 @@ fun MainScreen(viewModel: MainViewModel)
                     item {
                         WsprSection(
                             isRecording = uiState.recordingState is RecordingState.Recording,
+                            lastWsprFile = uiState.lastWsprFile,
                             onEncodeWspr = { callsign, grid, power ->
                                 viewModel.encodeWSPR(callsign, grid, power)
                             },
-                            onDecodeWspr = { viewModel.decodeWSPR() }
+                            onDecodeWspr = { viewModel.decodeWSPR() },
+                            onShareWspr = { viewModel.shareWsprFile() }
                         )
                     }
                 }
@@ -712,8 +735,10 @@ fun DiagnosticResultsCard(
 @Composable
 fun WsprSection(
     isRecording: Boolean,
+    lastWsprFile: File?,
     onEncodeWspr: (String, String, Int) -> Unit,
-    onDecodeWspr: () -> Unit
+    onDecodeWspr: () -> Unit,
+    onShareWspr: () -> Unit
 )
 {
     var callsign by remember { mutableStateOf("K1JT") }
@@ -780,7 +805,7 @@ fun WsprSection(
                     modifier = Modifier.weight(1f)
                 )
                 {
-                    Text("🎵 Generate WSPR")
+                    Text("💾 Save WSPR")
                 }
 
                 Button(
@@ -790,6 +815,21 @@ fun WsprSection(
                 )
                 {
                     Text("🔍 Decode WSPR")
+                }
+            }
+
+            // Share button (Only show this if a file exists
+            if (lastWsprFile != null && lastWsprFile.exists())
+            {
+                Button(
+                    onClick = onShareWspr,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary
+                    )
+                )
+                {
+                    Text("📤 Share WSPR File (${lastWsprFile.name})")
                 }
             }
 

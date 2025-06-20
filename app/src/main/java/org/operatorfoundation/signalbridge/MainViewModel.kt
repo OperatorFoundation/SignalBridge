@@ -17,6 +17,7 @@ import org.operatorfoundation.signalbridge.exceptions.UsbAudioException
 import org.operatorfoundation.signalbridge.models.*
 import org.operatorfoundation.audiocoder.CJarInterface
 import org.operatorfoundation.audiocoder.WSPRMessage
+import org.operatorfoundation.audiocoder.WsprFileManager
 import org.operatorfoundation.signalbridge.internal.RawAudioSamples
 
 
@@ -562,36 +563,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
 
                 if (wsprAudioData != null && wsprAudioData.isNotEmpty())
                 {
-                    // Convert byte array to ShortArray for playback
-                    val samples = convertBytesToShorts(wsprAudioData)
+                    val fileManager = WsprFileManager(getApplication())
+                    val savedFile = fileManager.saveWsprAsWav(
+                        wsprAudioData,
+                        callsign,
+                        gridSquare,
+                        power
+                    )
 
-                    // Play through current connection if available
-                    val connection = currentConnection
-                    if (connection != null)
+                    if (savedFile != null)
                     {
-                        // Enable playback if not already enabled
-                        if (!_uiState.value.isPlaybackEnabled)
-                        {
-                            connection.setPlaybackEnabled(true)
+                        _uiState.update { currentState ->
+                            currentState.copy(
+                                errorMessage = "WSPR signal saved: ${savedFile.name}",
+                                lastWsprFile = savedFile
+                            )
                         }
 
-                        // Play the WSPR signal
-                        // TODO: This is just for testing, we need to send this to the USB device
-                        playWsprAudio(samples)
-
-                        _uiState.update {
-                            it.copy(errorMessage = "WSPR signal generated: $callsign $gridSquare ${power}dBm")
-                        }
+                        Timber.i("WSPR signal saved: ${savedFile.name}")
                     }
                     else
                     {
-                        _uiState.update { it.copy(errorMessage = "No USB audio connection for WSPR playback") }
+                        _uiState.update {
+                            it.copy(errorMessage = "Failed to save WSPR file")
+                        }
                     }
                 }
                 else
                 {
                     _uiState.update { it.copy(errorMessage = "Failed to generate WSPR signal") }
-
                 }
             }
             catch (exception: Exception)
@@ -602,6 +602,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         }
+    }
+
+    /**
+     * Shares the last generated WSPR file.
+     */
+    fun shareWsprFile()
+    {
+        val file = _uiState.value.lastWsprFile
+
+        if (file != null && file.exists())
+        {
+            val fileManager = WsprFileManager(getApplication())
+            val shareIntent = fileManager.shareWsprFile(file)
+
+            if (shareIntent != null)
+            {
+                _uiState.update { it.copy(pendingShareIntent = shareIntent) }
+            }
+            else
+            {
+                _uiState.update { it.copy(errorMessage = "Failed to create the share intent") }
+            }
+        }
+        else
+        {
+            _uiState.update { it.copy(errorMessage = "No WSPR file available to share") }
+        }
+    }
+
+    /**
+     * Clears the pending share intent.
+     */
+    fun clearPendingShare()
+    {
+        _uiState.update { it.copy(pendingShareIntent = null) }
     }
 
     /**
@@ -758,22 +793,6 @@ data class WSPRDecodeResult(
     val snr: Float,
     val frequency: Double,
     val message: String
-)
-
-/**
- * UI state data class containing all the information needed by the UI.
- */
-data class MainUiState(
-    val availableDevices: List<UsbAudioDevice> = emptyList(),
-    val connectionStatus: ConnectionStatus = ConnectionStatus.Disconnected,
-    val connectedDevice: UsbAudioDevice? = null,
-    val recordingState: RecordingState = RecordingState.Stopped,
-    val isPlaybackEnabled: Boolean = false,
-    val audioLevel: AudioLevelInfo? = null,
-    val errorMessage: String? = null,
-    val diagnosticResults: String? = null,
-    val wsprLevel: AudioLevelInfo? = null,
-    val wsprResults: List<WSPRDecodeResult> = emptyList()
 )
 
 
