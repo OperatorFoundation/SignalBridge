@@ -65,7 +65,7 @@ dependencies {
     implementation(libs.androidx.material3)
 
 //    implementation(libs.audiocoderandroid) // NOTE: This relies on the main-SNAPSHOT (dev) tag
-    implementation("com.github.OperatorFoundation:AudioCoderAndroid:25f79fa2ae")
+    implementation("com.github.OperatorFoundation:AudioCoderAndroid:7b1d0e5b87")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

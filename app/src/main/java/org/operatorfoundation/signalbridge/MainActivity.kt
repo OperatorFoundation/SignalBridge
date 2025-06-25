@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -26,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.isGranted
+import org.operatorfoundation.audiocoder.WSPRProcessor
 import org.operatorfoundation.signalbridge.models.AudioLevelInfo
 import org.operatorfoundation.signalbridge.models.ConnectionStatus
 import org.operatorfoundation.signalbridge.models.ConnectionStatus.Connected
@@ -43,8 +45,8 @@ import java.io.File
  * This activity demonstrates the core functionality of the USB Audio Library,
  * including device discovery, connection management, and audio recording.
  */
-class MainActivity : ComponentActivity() {
-
+class MainActivity : ComponentActivity()
+{
     private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -173,12 +175,14 @@ fun MainScreen(viewModel: MainViewModel, context: Context)
                     item {
                         WsprSection(
                             isRecording = uiState.recordingState is RecordingState.Recording,
+                            audioBufferSeconds = uiState.audioBufferSeconds,
                             lastWsprFile = uiState.lastWsprFile,
                             onEncodeWspr = { callsign, grid, power ->
                                 viewModel.encodeWSPR(callsign, grid, power)
                             },
                             onDecodeWspr = { viewModel.decodeWSPR() },
-                            onShareWspr = { viewModel.shareWsprFile() }
+                            onShareWspr = { viewModel.shareWsprFile() },
+                            wsprProcessor = viewModel.wsprProcessor
                         )
                     }
                 }
@@ -706,7 +710,7 @@ fun DiagnosticResultsCard(
             Text(
                 text = results,
                 style = MaterialTheme.typography.bodyMedium,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                fontFamily = FontFamily.Monospace
             )
 
             if (results.contains("✅ YES")) {
@@ -735,23 +739,45 @@ fun DiagnosticResultsCard(
 @Composable
 fun WsprSection(
     isRecording: Boolean,
+    audioBufferSeconds: Float,
+    wsprProcessor: WSPRProcessor,
     lastWsprFile: File?,
     onEncodeWspr: (String, String, Int) -> Unit,
     onDecodeWspr: () -> Unit,
     onShareWspr: () -> Unit
 )
 {
-    var callsign by remember { mutableStateOf("K1JT") }
-    var gridSquare by remember { mutableStateOf("FN20") }
-    var power by remember { mutableStateOf("30") }
+    var callsign by remember { mutableStateOf(MainViewModel.DEFAULT_CALLSIGN) }
+    var gridSquare by remember { mutableStateOf(MainViewModel.DEFAULT_GRID_SQUARE) }
+    var power by remember { mutableStateOf(MainViewModel.DEFAULT_POWER_DBM) }
 
     Card(modifier = Modifier.fillMaxWidth())
     {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(MainViewModel.SECTION_PADDING_DP.dp),
+            verticalArrangement = Arrangement.spacedBy(MainViewModel.ELEMENT_SPACING_DP.dp)
         )
         {
+            // Buffer status display
+            Card(modifier = Modifier.fillMaxWidth())
+            {
+                Column(modifier = Modifier.padding(MainViewModel.ELEMENT_SPACING_DP.dp))
+                {
+                    Text("📊 WSPR Buffer Status")
+
+                    val formattedBufferTime = String.format("%.${MainViewModel.BUFFER_TIME_DECIMAL_PLACES}f", audioBufferSeconds)
+                    Text("Minimum needed: ${wsprProcessor.getMinimumBufferSeconds()}s")
+                    Text("Recommended: ${wsprProcessor.getRecommendedBufferSeconds()}s")
+
+                    if (wsprProcessor.isReadyForDecode()) {
+                        Text("✅ Ready for WSPR decode!", color = Color.Green)
+                    } else {
+                        val remaining = wsprProcessor.getMinimumBufferSeconds() - audioBufferSeconds
+                        Text("⏳ Need ${String.format("%.1f", remaining)}s more", color = Color.Red)
+                    }
+                }
+            }
+
             Text(
                 text = "📻 WSPR Signal Processing",
                 style = MaterialTheme.typography.titleMedium,
@@ -810,7 +836,7 @@ fun WsprSection(
 
                 Button(
                     onClick = onDecodeWspr,
-                    enabled = isRecording,
+                    enabled = isRecording && wsprProcessor.isReadyForDecode(),
                     modifier = Modifier.weight(1f)
                 )
                 {

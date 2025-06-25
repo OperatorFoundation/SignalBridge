@@ -16,9 +16,10 @@ import timber.log.Timber
 import org.operatorfoundation.signalbridge.exceptions.UsbAudioException
 import org.operatorfoundation.signalbridge.models.*
 import org.operatorfoundation.audiocoder.CJarInterface
-import org.operatorfoundation.audiocoder.WSPRMessage
-import org.operatorfoundation.audiocoder.WsprFileManager
-import org.operatorfoundation.signalbridge.internal.RawAudioSamples
+import org.operatorfoundation.audiocoder.WSPRBandplan
+import org.operatorfoundation.audiocoder.WSPRProcessor
+import org.operatorfoundation.audiocoder.WSPRFileManager
+
 
 
 /**
@@ -30,6 +31,31 @@ import org.operatorfoundation.signalbridge.internal.RawAudioSamples
  */
 class MainViewModel(application: Application) : AndroidViewModel(application)
 {
+    companion object
+    {
+        // UI formatting constants
+        const val BUFFER_TIME_DECIMAL_PLACES = 1
+        const val DEFAULT_CALLSIGN = "Q0QQQ"
+        const val DEFAULT_GRID_SQUARE = "FN20"
+        const val DEFAULT_POWER_DBM = "30"
+
+        // UI spacing constants
+        const val SECTION_PADDING_DP = 16
+        const val ELEMENT_SPACING_DP = 12
+        const val BUTTON_SPACING_DP = 8
+
+        // Audio Processing Constants
+        private const val LOG_INTERVAL_BUFFERS = 1000L          // Log every 1000 audio buffers
+        private const val SIGNIFICANT_AUDIO_THRESHOLD = 0.5f    // 50% of max amplitude
+
+        // UI Update Constants
+        private const val BUFFER_STATUS_DECIMAL_PLACES = 1      // Show 1 decimal place for buffer time
+
+        // Audio Statistics Constants
+        private const val SAMPLE_RATE_HZ = 12000                // Expected sample rate
+        private const val MAX_AMPLITUDE_16BIT = Short.MAX_VALUE.toFloat()
+    }
+
     // USB Audio Library components
     private val audioManager: UsbAudioManager = UsbAudioManager.create(application)
     private var currentConnection: UsbAudioConnection? = null
@@ -37,6 +63,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
     // UI State
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+
+    // WSPR
+    val wsprProcessor = WSPRProcessor()
 
     init {
         // Start device discovery when ViewModel is created
@@ -509,20 +538,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
      * Processes incoming audio data.
      *
      * This is where you would implement your custom audio processing logic
-     * for radio applications, signal analysis, etc.
+     * for radio applications, signal analysis, etc., in this case we will process WSPR signals.
      *
      * @param audioData The audio data to process
      */
-    private fun processAudioData(audioData: AudioData) {
+    private fun processAudioData(audioData: AudioData)
+    {
+        // Add the audio samples to the WSPR processor
+        wsprProcessor.addSamples(audioData.samples)
+
+        // Update the UI with the buffer status
+        val bufferDurationSeconds = wsprProcessor.getBufferDurationSeconds()
+        _uiState.update { it.copy(audioBufferSeconds = bufferDurationSeconds) }
+
         // Example processing - calculate basic statistics
         val samples = audioData.samples
         val maxAmplitude = samples.maxOrNull()?.toFloat() ?: 0f
         val minAmplitude = samples.minOrNull()?.toFloat() ?: 0f
-        val avgAmplitude = samples.map { it.toFloat() }.average().toFloat()
+        val averageAmplitude = samples.map { it.toFloat() }.average().toFloat()
 
         // Log statistics occasionally for demo purposes
-        if (audioData.sequenceNumber % 1000L == 0L) {
-            Timber.d("Audio stats - Max: $maxAmplitude, Min: $minAmplitude, Avg: $avgAmplitude")
+        if (audioData.sequenceNumber % LOG_INTERVAL_BUFFERS == 0L)
+        {
+            val bufferSeconds = String.format("%.${BUFFER_STATUS_DECIMAL_PLACES}f", bufferDurationSeconds)
+            Timber.d("Audio stats - Max: $maxAmplitude, Min: $minAmplitude, Avg: $averageAmplitude")
+            Timber.d("WSPR buffer: ${bufferSeconds}s (ready: ${wsprProcessor.isReadyForDecode()})")
         }
 
         // In a real radio application, you might:
@@ -532,16 +572,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
         // - Apply noise reduction algorithms
         // - Save to file for later analysis
 
-        // Example: Save significant audio events
-        if (maxAmplitude > Short.MAX_VALUE * 0.5f) { // Above 50% of max range
-            Timber.d("Significant audio event detected at sequence ${audioData.sequenceNumber}")
-            // Could trigger further processing or save this buffer
-        }
+        // Example: Detect significant audio events
+//        if (maxAmplitude > MAX_AMPLITUDE_16BIT * SIGNIFICANT_AUDIO_THRESHOLD)
+//        {
+//            Timber.d("Significant audio event detected at sequence ${audioData.sequenceNumber}")
+//        }
     }
 
     // MARK: WSPR Functions
     /**
-     * Generates a WSPR Signal and plays it through the phone speakers.
+     * Generates a WSPR Signal and saves it as a WAV file.
      *
      * TODO: Communication over USB to a device.
      */
@@ -563,7 +603,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
 
                 if (wsprAudioData != null && wsprAudioData.isNotEmpty())
                 {
-                    val fileManager = WsprFileManager(getApplication())
+                    val fileManager = WSPRFileManager(getApplication())
                     val savedFile = fileManager.saveWsprAsWav(
                         wsprAudioData,
                         callsign,
@@ -613,7 +653,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
 
         if (file != null && file.exists())
         {
-            val fileManager = WsprFileManager(getApplication())
+            val fileManager = WSPRFileManager(getApplication())
             val shareIntent = fileManager.shareWsprFile(file)
 
             if (shareIntent != null)
@@ -647,53 +687,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try
             {
-                _uiState.update { it.copy(errorMessage = "Analyzing audio for WSPR signals...") }
-
-                // TODO: This is for testing, we should collect data over time
-                val recentAudioData = collectRecentAudioData()
-
-                if (recentAudioData.isNotEmpty())
+                if (!wsprProcessor.isReadyForDecode())
                 {
-                    // Convert to byte array for AudioCoder
-                    val audioBytes = convertShortsToBytes(recentAudioData)
-
-                    // Decode WSPR signals
-                    val wsprMessages = CJarInterface.WSPRDecodeFromPcm(
-                        audioBytes,
-                        14.097, // Typical WSPR frequency (20m band)
-                        false // Not LSB
-                    )
-
-                    // Convert to UI friendly format
-                    val results = wsprMessages?.map { msg ->
-                        WSPRDecodeResult(
-                            callsign = msg.callsign ?: "Uknown",
-                            gridSquare = msg.gridsquare ?: "Unknown",
-                            power = msg.power,
-                            snr = msg.snr,
-                            frequency = msg.freq,
-                            message = msg.msg
-                        )
-                    } ?: emptyList()
+                    val minimumSeconds = wsprProcessor.getMinimumBufferSeconds()
+                    val currentSeconds = wsprProcessor.getBufferDurationSeconds()
+                    val formattedMinimum = String.format("%.${BUFFER_STATUS_DECIMAL_PLACES}f", minimumSeconds)
+                    val formattedCurrent = String.format("%.${BUFFER_STATUS_DECIMAL_PLACES}f", currentSeconds)
 
                     _uiState.update {
-                        it.copy(
-                            wsprResults = results,
-                            errorMessage = if (results.isNotEmpty())
-                            {
-                                "Decoded ${results.size} WSPR signal(s)"
-                            }
-                            else
-                            {
-                                "No WSPR signals found."
-                            }
-                        )
+                        it.copy(errorMessage = "Need ${formattedMinimum}s for decode, have ${formattedCurrent}s")
                     }
+
+                    return@launch
                 }
-                else
-                {
-                    _uiState.update { it.copy(errorMessage = "No audio data available for WSPR decode") }
+
+                val bufferDuration = String.format("%.${BUFFER_STATUS_DECIMAL_PLACES}f", wsprProcessor.getBufferDurationSeconds())
+                _uiState.update { it.copy(errorMessage = "Decoding WSPR from ${bufferDuration}s buffer...") }
+
+                val wsprMessages = wsprProcessor.decodeBufferedWSPR(
+                    dialFrequencyMHz = WSPRBandplan.getDefaultFrequency(),
+                    useLowerSideband = false
+                )
+
+                // Convert and display results
+                val results = wsprMessages?.map { message ->
+                    WSPRDecodeResult(
+                        callsign = message.callsign ?: "Unknown",
+                        gridSquare = message.gridsquare ?: "Unknown",
+                        power = message.power,
+                        snr = message.snr,
+                        frequency = message.freq,
+                        message = message.msg?: ""
+                    )
+                } ?: emptyList()
+
+                _uiState.update {
+                    it.copy(
+                        wsprResults = results,
+                        errorMessage = if (results.isNotEmpty())
+                        {
+                            "🎯 Decoded ${results.size} WSPR signal(s)!"
+                        }
+                        else
+                        {
+                            "No WSPR signals found in buffer"
+                        }
+                    )
                 }
+
             }
             catch (exception: Exception)
             {
@@ -703,47 +744,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         }
-    }
-
-    // TODO: Move helper functions to AudioCoder or SignalWave library
-    private fun convertBytesToShorts(bytes: ByteArray): ShortArray
-    {
-        val shorts = ShortArray(bytes.size / 2)
-        for (i in shorts.indices)
-        {
-            val byte1 = bytes[i * 2].toInt() and 0xFF
-            val byte2 = bytes[i * 2 + 1].toInt() and 0xFF
-            shorts[i] = ((byte2 shl 8) or byte1).toShort()
-        }
-
-        return shorts
-    }
-
-    private fun convertShortsToBytes(shorts: ShortArray): ByteArray
-    {
-        val bytes = ByteArray(shorts.size * 2)
-        for (i in shorts.indices)
-        {
-            val short = shorts[i].toInt()
-            bytes[i * 2] = (short and 0xFF).toByte()
-            bytes[i * 2 + 1] = ((short shr 8) and 0xFF).toByte()
-        }
-
-        return bytes
-    }
-
-    /**
-     * Buffers audio data over time and returns recent samples for analysis
-     */
-    private fun collectRecentAudioData(): ShortArray
-    {
-        // TODO: Implementation
-        return ShortArray(0)
-    }
-
-    private suspend fun playWsprAudio(samples: ShortArray)
-    {
-        // TODO: Implementation, play audio through AudioOutputManager
     }
 
     /**

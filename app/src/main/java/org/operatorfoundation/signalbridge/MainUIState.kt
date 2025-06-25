@@ -23,5 +23,6 @@ data class MainUiState(
     val wsprLevel: AudioLevelInfo? = null,
     val wsprResults: List<WSPRDecodeResult> = emptyList(),
     val lastWsprFile: File? = null,
-    val pendingShareIntent: Intent? = null
+    val pendingShareIntent: Intent? = null,
+    val audioBufferSeconds: Float = 0f
 )
