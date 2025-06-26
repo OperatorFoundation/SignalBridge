@@ -131,14 +131,14 @@ internal class AudioLevelProcessor
             // New peak detected
             peakLevel = currentLevel
             peakTimestamp = timestamp
-            Timber.v("New peak level detected %.3f", peakLevel)
+//            Timber.v("New peak level detected %.3f", peakLevel)
         }
         else if (timeSinceLastPeak > PEAK_HOLD_TIME_MS)
         {
             // Peak hold time expired, decay towards to current level
             peakLevel = currentLevel
             peakTimestamp = timestamp
-            Timber.v("Peak level hold expired, reset to: %.3f", peakLevel)
+//            Timber.v("Peak level hold expired, reset to: %.3f", peakLevel)
         }
 
         // Ensure peak is never lower than the current level
