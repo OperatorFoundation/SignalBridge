@@ -1,49 +1,53 @@
 package org.operatorfoundation.signalbridge
 
 import android.Manifest
-import android.R
-import android.content.Context
 import android.os.Bundle
-import android.view.Surface
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.isGranted
-import org.operatorfoundation.audiocoder.WSPRProcessor
-import org.operatorfoundation.signalbridge.models.AudioLevelInfo
-import org.operatorfoundation.signalbridge.models.ConnectionStatus
-import org.operatorfoundation.signalbridge.models.ConnectionStatus.Connected
-import org.operatorfoundation.signalbridge.models.ConnectionStatus.Connecting
-import org.operatorfoundation.signalbridge.models.ConnectionStatus.Disconnected
-import org.operatorfoundation.signalbridge.models.RecordingState
+import org.operatorfoundation.audiocoder.*
+import org.operatorfoundation.audiocoder.models.WSPRCycleInformation
+import org.operatorfoundation.audiocoder.models.WSPRDecodeResult
+import org.operatorfoundation.audiocoder.models.WSPRStationState
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import org.operatorfoundation.signalbridge.ui.theme.SignalBridgeDemoTheme
 import timber.log.Timber
-import java.io.File
 
 /**
- * Main activity for the USB Audio Library demo application.
+ * Main activity for the WSPR Station Demo application.
  *
- * This activity demonstrates the core functionality of the USB Audio Library,
- * including device discovery, connection management, and audio recording.
+ * This activity demonstrates the complete WSPR station functionality using:
+ * - SignalBridge: USB audio device management
+ * - AudioCoder: WSPR timing, processing, and decoding
+ *
+ * The UI is designed to show users:
+ * - Current system status at a glance
+ * - WSPR timing and cycle information
+ * - Real-time decode results
+ * - Device connection status
+ * - Diagnostic information for troubleshooting
  */
 class MainActivity : ComponentActivity()
 {
@@ -52,30 +56,24 @@ class MainActivity : ComponentActivity()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // TODO: Move this
-        // Initialize logging
+        // Initialize logging for debugging
         Timber.plant(Timber.DebugTree())
 
         setContent {
             SignalBridgeDemoTheme {
-                MainScreen(viewModel = viewModel, context = this)
+                WSPRStationDemoApp(viewModel = viewModel)
             }
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        // Clean up resources
-        viewModel.cleanup()
     }
 }
 
 /**
- * Main screen composable that displays the USB audio demo interface.
+ * Main composable for the WSPR Station Demo application.
+ * Handles permissions and displays the appropriate UI based on system state.
  */
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
-fun MainScreen(viewModel: MainViewModel, context: Context)
+fun WSPRStationDemoApp(viewModel: MainViewModel)
 {
     // Request audio recording permission
     val audioPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
@@ -83,614 +81,339 @@ fun MainScreen(viewModel: MainViewModel, context: Context)
     // Collect UI state
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
+
+    // Handle pending share intent
+    uiState.pendingShareIntent?.let { shareIntent ->
+        LaunchedEffect(shareIntent) {
+
+            // Start the share activity (errors handled in ViewModel)
+            context.startActivity(shareIntent)
+
+            // Clear the pending intent after starting the activity
+            viewModel.clearPendingShareIntent()
+        }
+    }
+
     // Request permission if not granted
-    LaunchedEffect(audioPermissionState.status.isGranted)
-    {
+    LaunchedEffect(audioPermissionState.status.isGranted) {
         if (!audioPermissionState.status.isGranted)
         {
             audioPermissionState.launchPermissionRequest()
         }
     }
 
-    // Handle pending share intent
-    uiState.pendingShareIntent?.let { shareIntent ->
-        LaunchedEffect(shareIntent) {
-            try
-            {
-                context.startActivity(shareIntent)
-            }
-            catch (e: Exception)
-            {
-                // Handle error
-            }
-            finally
-            {
-                viewModel.clearPendingShare()
-            }
-        }
-    }
-
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
-    )
-    {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        )
+    ) {
+        if (!audioPermissionState.status.isGranted)
         {
-            // Header
+            // Show permission request UI
+            PermissionRequiredScreen {
+                audioPermissionState.launchPermissionRequest()
+            }
+        }
+        else
+        {
+            // Show main WSPR station interface
+            WSPRStationMainScreen(
+                uiState = uiState,
+                onConnectToDevice = { device -> viewModel.connectToDevice(device) },
+                onDisconnect = { viewModel.disconnect() },
+                onManualDecode = { viewModel.triggerManualDecode() },
+                onEncodeWSPR = { callsign, gridSquare, power -> viewModel.encodeWSPRSignal(callsign, gridSquare, power) },
+                onShareLastFile = { viewModel.shareLastWSPRFile() },
+                onGetDiagnostics = { viewModel.getDiagnosticInformation() }
+            )
+        }
+    }
+}
+
+/**
+ * Main screen for WSPR station operations.
+ * Displays system status, device management, and decode results.
+ */
+@Composable
+fun WSPRStationMainScreen(
+    uiState: MainUiState,
+    onConnectToDevice: (UsbAudioDevice) -> Unit,
+    onDisconnect: () -> Unit,
+    onManualDecode: () -> Unit,
+    onEncodeWSPR: (String, String, Int) -> Unit,
+    onShareLastFile: () -> Unit,
+    onGetDiagnostics: () -> String
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Header with app title and status
+        WSPRStationHeader(uiState = uiState)
+
+        // Main content area
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            // System status card (always visible)
             item {
-                Text(
-                    text = "USB Audio Library Demo",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
+                SystemStatusCard(uiState = uiState)
+            }
+
+            // Device management section
+            item {
+                DeviceManagementSection(
+                    uiState = uiState,
+                    onConnectToDevice = onConnectToDevice,
+                    onDisconnect = onDisconnect
                 )
             }
 
-            // Permission status
-            if (!audioPermissionState.status.isGranted)
+            // WSPR timing and controls (only when connected)
+            if (uiState.isReadyForOperation)
             {
                 item {
-                    PermissionRequiredCard {
-                        audioPermissionState.launchPermissionRequest()
-                    }
+                    WSPRTimingCard(
+                        uiState = uiState,
+                        onManualDecode = onManualDecode
+                    )
                 }
+            }
+
+            // WSPR encoding and file management (always available)
+            item {
+                WSPREncodingCard(
+                    onEncodeWSPR = onEncodeWSPR,
+                    onShareLastFile = onShareLastFile,
+                    hasFileToShare = uiState.lastGeneratedFile != null
+                )
+            }
+
+            // Decode results (only when we have results)
+            if (uiState.decodeResults.isNotEmpty()) {
+                item {
+                    DecodeResultsCard(results = uiState.decodeResults)
+                }
+            }
+
+            // Diagnostics section
+            item {
+                DiagnosticsCard(onGetDiagnostics = onGetDiagnostics)
+            }
+        }
+    }
+}
+
+/**
+ * Header section with app title and current system status.
+ */
+@Composable
+fun WSPRStationHeader(uiState: MainUiState)
+{
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (uiState.hasErrors)
+            {
+                MaterialTheme.colorScheme.errorContainer
+            }
+            else if (uiState.isReadyForOperation)
+            {
+                MaterialTheme.colorScheme.primaryContainer
             }
             else
             {
-                // Main content
-                item {
-                    DeviceDiscoverySection(
-                        devices = uiState.availableDevices,
-                        onConnectToDevice = { device -> viewModel.connectToDevice(device) }
-                    )
-                }
-
-                item {
-                    ConnectionStatusSection(
-                        connectionStatus = uiState.connectionStatus,
-                        connectedDevice = uiState.connectedDevice,
-                        onConnect = { device -> viewModel.connectToDevice(device) },
-                        onDisconnect = { viewModel.disconnect() }
-                    )
-                }
-
-                if (uiState.connectedDevice != null)
-                {
-                    item {
-                        AudioControlSection(
-                            recordingState = uiState.recordingState,
-                            audioLevel = uiState.audioLevel,
-                            isPlaybackEnabled = uiState.isPlaybackEnabled,
-                            onStartRecording = { viewModel.startRecording() },
-                            onStopRecording = { viewModel.stopRecording() },
-                            onTogglePlayback = { viewModel.togglePlayback() }
-                        )
-                    }
-
-                    item {
-                        WsprSection(
-                            isRecording = uiState.recordingState is RecordingState.Recording,
-                            audioBufferSeconds = uiState.audioBufferSeconds,
-                            lastWsprFile = uiState.lastWsprFile,
-                            onEncodeWspr = { callsign, grid, power ->
-                                viewModel.encodeWSPR(callsign, grid, power)
-                            },
-                            onDecodeWspr = { viewModel.decodeWSPR() },
-                            onShareWspr = { viewModel.shareWsprFile() },
-                            wsprProcessor = viewModel.wsprProcessor
-                        )
-                    }
-                }
-
-                // WSPR Results
-                if (uiState.wsprResults.isNotEmpty())
-                {
-                    item {
-                        WsprResultsCard(
-                            results = uiState.wsprResults,
-                            onDismiss = { viewModel.clearWSPRResults() }
-                        )
-                    }
-                }
-
-                item {
-                    DiagnosticSection(
-                        onRunDiagnostics = { viewModel.runAudioRecordDiagnostics() },
-                        onTestSystemAudio = { viewModel.testSystemAudio() }
-                    )
-                }
-
-                //  Display diagnostic results
-                uiState.diagnosticResults?.let { results ->
-                    item {
-                        DiagnosticResultsCard(
-                            results = results,
-                            onDismiss = { viewModel.clearDiagnostics() }
-                        )
-                    }
-                }
-
-                // Error display
-                uiState.errorMessage?.let { error ->
-                    item {
-                        ErrorCard(
-                            message = error,
-                            onDismiss = { viewModel.clearError() }
-                        )
-                    }
-                }
+                MaterialTheme.colorScheme.surfaceVariant
             }
-        }
-    }
-}
-
-/**
- * Card displayed when audio permission is required.
- */
-@Composable
-fun PermissionRequiredCard(onRequestPermission: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+        )
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "Audio Permission Required",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                text = "📡 WSPR Station Demo",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
             )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             Text(
-                text = "This app needs audio recording permission to capture audio from USB devices.",
-                style = MaterialTheme.typography.bodyMedium
+                text = uiState.systemStatusSummary,
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+                color = if (uiState.hasErrors) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
-            Button(
-                onClick = onRequestPermission,
-                modifier = Modifier.align(Alignment.End)
-            ) {
-                Text("Grant Permission")
-            }
         }
     }
 }
 
 /**
- * Section for device discovery and listing.
+ * System status card showing current operational state.
  */
 @Composable
-fun DeviceDiscoverySection(
-    devices: List<UsbAudioDevice>,
-    onConnectToDevice: (UsbAudioDevice) -> Unit
-)
+fun SystemStatusCard(uiState: MainUiState)
 {
-    Card(modifier = Modifier.fillMaxWidth())
-    {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        )
-        {
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
-            )
-            {
+            ) {
                 Text(
-                    text = "Available USB Audio Devices",
+                    text = "System Status",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
-            }
 
-            if (devices.isEmpty())
-            {
-                Text(
-                    text = "No USB audio devices found. Connect a USB audio device and tap Refresh.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            else
-            {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.heightIn(max = 200.dp)
-                )
-                {
-                    items(devices) { device ->
-                        DeviceItem(device = device, onClick = onConnectToDevice)
+                Icon(
+                    imageVector = when {
+                        uiState.hasErrors -> Icons.Default.Close
+                        uiState.isReadyForOperation -> Icons.Default.CheckCircle
+                        else -> Icons.Default.Info
+                    },
+                    contentDescription = "Status",
+                    tint = when {
+                        uiState.hasErrors -> MaterialTheme.colorScheme.error
+                        uiState.isReadyForOperation -> Color.Green
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
+                )
+            }
+
+            // Connection status
+            StatusRow(
+                label = "USB Connection",
+                value = if (uiState.connectedDevice != null)
+                {
+                    "Connected to ${uiState.connectedDevice.displayName}"
                 }
+                else
+                {
+                    "Not connected"
+                },
+                isPositive = uiState.connectedDevice != null
+            )
+
+            // WSPR station status
+            StatusRow(
+                label = "WSPR Station",
+                value = if (uiState.isWSPRStationActive)
+                {
+                    uiState.stationState?.let { state ->
+                        when (state) {
+                            is WSPRStationState.Running -> "Running"
+                            is WSPRStationState.WaitingForNextWindow -> "Waiting for decode window"
+                            is WSPRStationState.CollectingAudio -> "Collecting audio"
+                            is WSPRStationState.ProcessingAudio -> "Processing signals"
+                            is WSPRStationState.DecodeCompleted -> "Decode completed"
+                            is WSPRStationState.Error -> "Error: ${state.errorDescription}"
+                            else -> state::class.simpleName ?: "Unknown"
+                        }
+                    } ?: "Active"
+                }
+                else
+                {
+                    "Not active"
+                },
+                isPositive = uiState.isWSPRStationActive && uiState.stationState !is WSPRStationState.Error
+            )
+
+            // Recent activity
+            if (uiState.decodeResults.isNotEmpty())
+            {
+                StatusRow(
+                    label = "Recent Decodes",
+                    value = "${uiState.decodeResults.size} signals decoded",
+                    isPositive = true
+                )
             }
         }
     }
 }
 
 /**
- * Individual device item in the device list.
+ * Device management section for connecting to USB audio devices.
  */
 @Composable
-fun DeviceItem(device: UsbAudioDevice, onClick: (UsbAudioDevice) -> Unit)
-{
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick(device) },
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = MaterialTheme.shapes.small
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                text = device.displayName,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium
-            )
-            Text(
-                text = "Vendor ID: ${device.vendorId}, Product ID: ${device.productId}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-/**
- * Section showing connection status and controls.
- */
-@Composable
-fun ConnectionStatusSection(
-    connectionStatus: ConnectionStatus,
-    connectedDevice: UsbAudioDevice?,
-    onConnect: (UsbAudioDevice) -> Unit,
+fun DeviceManagementSection(
+    uiState: MainUiState,
+    onConnectToDevice: (UsbAudioDevice) -> Unit,
     onDisconnect: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                text = "Connection Status",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = when (connectionStatus) {
-                            is Disconnected -> "Disconnected"
-                            is Connecting -> "Connecting..."
-                            is Connected -> "Connected"
-                            is ConnectionStatus.Error -> "Error"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = when (connectionStatus) {
-                            is Connected -> Color.Green
-                            is ConnectionStatus.Error -> Color.Red
-                            else -> MaterialTheme.colorScheme.onSurface
-                        }
-                    )
+                Text(
+                    text = "USB Audio Devices",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
 
-                    connectedDevice?.let { device ->
-                        Text(
-                            text = device.displayName,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                if (connectedDevice != null) {
+                if (uiState.connectedDevice != null) {
                     Button(
                         onClick = onDisconnect,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error
                         )
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Disconnect",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text("Disconnect")
                     }
                 }
             }
-        }
-    }
-}
 
-/**
- * Section for audio recording controls and level monitoring.
- */
-@Composable
-fun AudioControlSection(
-    recordingState: RecordingState,
-    audioLevel: AudioLevelInfo?,
-    isPlaybackEnabled: Boolean,
-    onStartRecording: () -> Unit,
-    onStopRecording: () -> Unit,
-    onTogglePlayback: () -> Unit
-)
-{
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = "Audio Recording",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            // Recording status
-            Text(
-                text = when (recordingState) {
-                    is RecordingState.Stopped -> "Stopped"
-                    is RecordingState.Starting -> "Starting..."
-                    is RecordingState.Recording -> "Recording"
-                    is RecordingState.Stopping -> "Stopping..."
-                    is RecordingState.Error -> "Error: ${recordingState.message}"
-                    else -> "Error"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = when (recordingState) {
-                    is RecordingState.Recording -> Color.Green
-                    is RecordingState.Error -> Color.Red
-                    else -> MaterialTheme.colorScheme.onSurface
-                }
-            )
-
-            // Audio level display
-            audioLevel?.let { level ->
-                AudioLevelDisplay(level = level)
-            }
-
-            // Recording controls
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = onStartRecording,
-                    enabled = recordingState is RecordingState.Stopped,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Start Recording")
-                }
-
-                Button(
-                    onClick = onStopRecording,
-                    enabled = recordingState is RecordingState.Recording,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text("Stop Recording")
-                }
-            }
-
-            // Playback control
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Playback through speakers:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f)
-                )
-
-                Switch(
-                    checked = isPlaybackEnabled,
-                    onCheckedChange = { onTogglePlayback() },
-                    enabled = true
-                )
-            }
-
-            if (isPlaybackEnabled)
-            {
-                Text(
-                    text = "🔊 Audio from USB device will play through phone speakers",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            // Debug info section
-            if (isPlaybackEnabled) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color.Yellow.copy(alpha = 0.1f))
-                ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
-                        Text(
-                            text = "🔧 Playback Debug Info",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Toggle: ON | Recording: ${recordingState::class.simpleName}",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            text = "Audio Level: ${audioLevel?.currentLevel?.times(100)?.toInt() ?: 0}%",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * Display component for audio level visualization.
- */
-@Composable
-fun AudioLevelDisplay(level: AudioLevelInfo)
-{
-    Column(
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(
-            text = "Audio Levels",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Medium
-        )
-
-        // Current level bar
-        LevelBar(
-            label = "Current",
-            level = level.currentLevel,
-            color = if (level.isClipping()) Color.Red else MaterialTheme.colorScheme.primary
-        )
-
-        // Peak level bar
-        LevelBar(
-            label = "Peak",
-            level = level.peakLevel,
-            color = MaterialTheme.colorScheme.secondary
-        )
-
-        // Average level bar
-        LevelBar(
-            label = "Average",
-            level = level.averageLevel,
-            color = MaterialTheme.colorScheme.tertiary
-        )
-    }
-}
-
-/**
- * Individual level bar component.
- */
-@Composable
-fun LevelBar(
-    label: String,
-    level: Float,
-    color: Color
-)
-{
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.width(60.dp)
-        )
-
-        Box(
-            modifier = Modifier
-                .height(8.dp)
-                .fillMaxWidth()
-                .weight(1f)
-        ) {
-            // Background bar
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = MaterialTheme.shapes.small
-            ) {}
-
-            // Level indicator
-            Surface(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(level.coerceIn(0f, 1f)),
-                color = color,
-                shape = MaterialTheme.shapes.small
-            ) {}
-        }
-
-        Text(
-            text = "${(level * 100).toInt()}%",
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.width(40.dp)
-        )
-    }
-}
-
-/**
- *  Diagnostic section for testing AudioRecord compatibility
- */
-@Composable
-fun DiagnosticSection(
-    onRunDiagnostics: () -> Unit,
-    onTestSystemAudio: () -> Unit
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = " AudioRecord Diagnostics",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Text(
-                text = "Test if AudioRecord can access the connected USB audio device.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Button(
-                onClick = onRunDiagnostics,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Run AudioRecord Compatibility Test")
-            }
-
-            Button(
-                onClick = onTestSystemAudio,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("🔊 Test System Audio (440Hz Tone)")
-            }
-        }
-    }
-}
-
-/**
- *  Display diagnostic results
- */
-@Composable
-fun DiagnosticResultsCard(
-    results: String,
-    onDismiss: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (results.contains("✅ YES")) {
-                Color.Green.copy(alpha = 0.1f)
+            if (uiState.connectedDevice != null) {
+                // Show connected device info
+                ConnectedDeviceInfo(device = uiState.connectedDevice)
             } else {
-                MaterialTheme.colorScheme.errorContainer
+                // Show available devices
+                AvailableDevicesList(
+                    devices = uiState.availableDevices,
+                    onConnectToDevice = onConnectToDevice
+                )
             }
-        )
-    ) {
+        }
+    }
+}
+
+/**
+ * WSPR timing information and manual controls.
+ */
+@Composable
+fun WSPRTimingCard(
+    uiState: MainUiState,
+    onManualDecode: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -698,113 +421,364 @@ fun DiagnosticResultsCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "AudioRecord Compatibility Results",
+                    text = "WSPR Timing & Controls",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
-                TextButton(onClick = onDismiss) {
-                    Text("Dismiss")
+
+                Button(
+                    onClick = onManualDecode,
+                    enabled = uiState.cycleInformation?.isDecodeWindowOpen == true
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Manual Decode",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Manual Decode")
                 }
             }
 
+            uiState.cycleInformation?.let { cycleInfo ->
+                WSPRCycleDisplay(cycleInfo = cycleInfo)
+            }
+        }
+    }
+}
+
+/**
+ * Decode results display with detailed information.
+ */
+@Composable
+fun DecodeResultsCard(results: List<WSPRDecodeResult>)
+{
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Text(
-                text = results,
-                style = MaterialTheme.typography.bodyMedium,
-                fontFamily = FontFamily.Monospace
+                text = "Recent WSPR Decodes (${results.size})",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
             )
 
-            if (results.contains("✅ YES")) {
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 300.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(results.take(10)) { result ->
+                    WSPRDecodeResultItem(result = result)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Individual WSPR decode result item.
+ */
+@Composable
+fun WSPRDecodeResultItem(result: WSPRDecodeResult)
+{
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 Text(
-                    text = "🎉 SUCCESS: AudioRecord can access USB audio!",
+                    text = "${result.callsign} (${result.gridSquare})",
                     style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Green
+                    fontWeight = FontWeight.Medium
                 )
-            } else {
+
                 Text(
-                    text = "⚠️ AudioRecord cannot access USB audio. Alternative approaches may be needed.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Red
+                    text = "${result.powerLevelDbm}dBm",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = result.signalQualityDescription,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Text(
+                    text = result.displayFrequency,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
     }
 }
 
-
 /**
- * WSPR Section
+ * WSPR cycle timing display with progress indicator.
  */
 @Composable
-fun WsprSection(
-    isRecording: Boolean,
-    audioBufferSeconds: Float,
-    wsprProcessor: WSPRProcessor,
-    lastWsprFile: File?,
-    onEncodeWspr: (String, String, Int) -> Unit,
-    onDecodeWspr: () -> Unit,
-    onShareWspr: () -> Unit
-)
+fun WSPRCycleDisplay(cycleInfo: WSPRCycleInformation)
 {
-    var callsign by remember { mutableStateOf(MainViewModel.DEFAULT_CALLSIGN) }
-    var gridSquare by remember { mutableStateOf(MainViewModel.DEFAULT_GRID_SQUARE) }
-    var power by remember { mutableStateOf(MainViewModel.DEFAULT_POWER_DBM) }
-
-    Card(modifier = Modifier.fillMaxWidth())
-    {
-        Column(
-            modifier = Modifier.padding(MainViewModel.SECTION_PADDING_DP.dp),
-            verticalArrangement = Arrangement.spacedBy(MainViewModel.ELEMENT_SPACING_DP.dp)
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Progress bar for cycle position
+        LinearProgressIndicator(
+            progress = cycleInfo.cycleProgressPercentage,
+            modifier = Modifier.fillMaxWidth()
         )
-        {
-            // Buffer status display
-            Card(modifier = Modifier.fillMaxWidth())
-            {
-                Column(modifier = Modifier.padding(MainViewModel.ELEMENT_SPACING_DP.dp))
-                {
-                    Text("📊 WSPR Buffer Status")
 
-                    val formattedBufferTime = String.format("%.${MainViewModel.BUFFER_TIME_DECIMAL_PLACES}f", audioBufferSeconds)
-                    Text("Minimum needed: ${wsprProcessor.getMinimumBufferSeconds()}s")
-                    Text("Recommended: ${wsprProcessor.getRecommendedBufferSeconds()}s")
-
-                    if (wsprProcessor.isReadyForDecode()) {
-                        Text("✅ Ready for WSPR decode!", color = Color.Green)
-                    } else {
-                        val remaining = wsprProcessor.getMinimumBufferSeconds() - audioBufferSeconds
-                        Text("⏳ Need ${String.format("%.1f", remaining)}s more", color = Color.Red)
-                    }
-                }
-            }
+        // Cycle information
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Cycle: ${cycleInfo.cyclePositionSeconds}s / 120s",
+                style = MaterialTheme.typography.bodyMedium
+            )
 
             Text(
-                text = "📻 WSPR Signal Processing",
+                text = if (cycleInfo.isDecodeWindowOpen) {
+                    "🔍 Decode Window Open"
+                } else if (cycleInfo.isTransmissionActive) {
+                    "📡 Transmission Active"
+                } else {
+                    "🔇 Silent Period"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (cycleInfo.isDecodeWindowOpen) {
+                    Color.Green
+                } else if (cycleInfo.isTransmissionActive) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+        }
+
+        // Next window information
+        Text(
+            text = cycleInfo.nextDecodeWindowInfo.humanReadableDescription,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/**
+ * Connected device information display.
+ */
+@Composable
+fun ConnectedDeviceInfo(device: UsbAudioDevice)
+{
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Favorite,
+                contentDescription = "Connected Device",
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column {
+                Text(
+                    text = device.displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+
+                Text(
+                    text = "Device ID: ${device.deviceId}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+    }
+}
+
+/**
+ * List of available USB audio devices.
+ */
+@Composable
+fun AvailableDevicesList(
+    devices: List<UsbAudioDevice>,
+    onConnectToDevice: (UsbAudioDevice) -> Unit
+) {
+    if (devices.isEmpty()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "No Devices",
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "No USB audio devices found",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Text(
+                    text = "Connect a USB audio device to begin",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    } else {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            devices.forEach { device ->
+                DeviceListItem(
+                    device = device,
+                    onConnect = { onConnectToDevice(device) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Individual device item in the available devices list.
+ */
+@Composable
+fun DeviceListItem(
+    device: UsbAudioDevice,
+    onConnect: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.FavoriteBorder,
+                contentDescription = "USB Device",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = device.displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+
+                Text(
+                    text = "ID: ${device.deviceId} | Vendor: ${device.vendorId} | Product: ${device.productId}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Button(
+                onClick = onConnect,
+                modifier = Modifier.padding(start = 8.dp)
+            ) {
+                Text("Connect")
+            }
+        }
+    }
+}
+
+/**
+ * WSPR encoding card for generating and sharing WSPR signals.
+ */
+@Composable
+fun WSPREncodingCard(
+    onEncodeWSPR: (String, String, Int) -> Unit,
+    onShareLastFile: () -> Unit,
+    hasFileToShare: Boolean
+) {
+    var callsign by remember { mutableStateOf("Q0QQQ") }
+    var gridSquare by remember { mutableStateOf("FN20") }
+    var power by remember { mutableStateOf("30") }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "WSPR Signal Generator",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
 
             Text(
-                text = "Generate and decode WSPR (Weak Signal Propagation Reporter) signals",
+                text = "Generate WSPR audio signals for testing and transmission",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            // WSPR Parameters
+            // Input fields
             OutlinedTextField(
                 value = callsign,
                 onValueChange = { callsign = it.uppercase() },
                 label = { Text("Callsign") },
-                placeholder = { Text("K1JT") },
-                modifier = Modifier.fillMaxWidth()
+                placeholder = { Text("W1AW") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
             )
 
             OutlinedTextField(
                 value = gridSquare,
                 onValueChange = { gridSquare = it.uppercase() },
                 label = { Text("Grid Square") },
-                placeholder = { Text("FN20") },
-                modifier = Modifier.fillMaxWidth()
+                placeholder = { Text("FN31") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
             )
 
             OutlinedTextField(
@@ -812,206 +786,214 @@ fun WsprSection(
                 onValueChange = { power = it },
                 label = { Text("Power (dBm)") },
                 placeholder = { Text("30") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
             )
 
-            // WSPR Actions
+            // Action buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
-            )
-            {
+            ) {
                 Button(
                     onClick = {
                         val powerInt = power.toIntOrNull() ?: 30
-                        onEncodeWspr(callsign, gridSquare, powerInt)
+                        onEncodeWSPR(callsign, gridSquare, powerInt)
                     },
                     enabled = callsign.isNotBlank() && gridSquare.isNotBlank(),
                     modifier = Modifier.weight(1f)
-                )
-                {
-                    Text("💾 Save WSPR")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Generate",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Generate WAV")
                 }
 
                 Button(
-                    onClick = onDecodeWspr,
-                    enabled = isRecording && wsprProcessor.isReadyForDecode(),
-                    modifier = Modifier.weight(1f)
-                )
-                {
-                    Text("🔍 Decode WSPR")
-                }
-            }
-
-            // Share button (Only show this if a file exists
-            if (lastWsprFile != null && lastWsprFile.exists())
-            {
-                Button(
-                    onClick = onShareWspr,
-                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onShareLastFile,
+                    enabled = hasFileToShare,
+                    modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.secondary
                     )
-                )
-                {
-                    Text("📤 Share WSPR File (${lastWsprFile.name})")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Share File")
                 }
             }
 
-            if (!isRecording)
-            {
-                Text(
-                    text = "💡 Start recording to decode WSPR signals from your USB audio device",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth()
-                )
+            // Info about generated files
+            if (hasFileToShare) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Generated File",
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Text(
+                            text = "WSPR file generated and ready to share",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
             }
         }
     }
 }
 
-/**
- * Displays WSPR Results.
- */
 @Composable
-fun WsprResultsCard(
-    results: List<WSPRDecodeResult>,
-    onDismiss: () -> Unit
-)
+fun DiagnosticsCard(onGetDiagnostics: () -> String)
 {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (results.isNotEmpty())
-            {
-                Color.Green.copy(alpha = 0.1f)
-            }
-            else
-            {
-                MaterialTheme.colorScheme.surfaceVariant
-            }
-        )
-    )
-    {
+    var showDiagnostics by remember { mutableStateOf(false) }
+    var diagnosticsText by remember { mutableStateOf("") }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        )
-        {
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
-            )
-            {
+            ) {
                 Text(
-                    text = "WSPR Decode Results",
+                    text = "System Diagnostics",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
 
-                TextButton(onClick = onDismiss)
-                {
-                    Text("Dismiss")
+                Button(
+                    onClick = {
+                        diagnosticsText = onGetDiagnostics()
+                        showDiagnostics = !showDiagnostics
+                    }
+                ) {
+                    Icon(
+                        imageVector = if (showDiagnostics) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                        contentDescription = if (showDiagnostics) "Hide" else "Show",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(if (showDiagnostics) "Hide" else "Show Diagnostics")
+                }
+            }
+
+            if (showDiagnostics) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Text(
+                        text = diagnosticsText,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .padding(12.dp)
+                            .verticalScroll(rememberScrollState())
+                    )
                 }
             }
         }
-
-        if (results.isEmpty())
-        {
-            Text(
-                text = "No WSPR signals decoded",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        else
-        {
-            Text(
-                text = "📡 Decoded ${results.size} WSPR signal${if (results.size != 1) "s" else ""}:",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = Color.Green
-            )
-
-            results.forEach { result ->
-                WSPRMessageItem(result)
-            }
-        }
     }
 }
-
-@Composable
-fun WSPRMessageItem(result: WSPRDecodeResult)
-{
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = MaterialTheme.shapes.small
-    )
-    {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        )
-        {
-            Text(
-                text = "${result.callsign} - ${ result.gridSquare }",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Text(
-                text = "Power: ${result.power} dBm | SNR: ${result.snr} dB",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Text(
-                text = "Freq: ${result.frequency} Hz | Message: ${result.message}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
 
 /**
- * Error display card.
+ * Status row component for displaying labeled status information.
  */
 @Composable
-fun ErrorCard(
-    message: String,
-    onDismiss: () -> Unit
+fun StatusRow(
+    label: String,
+    value: String,
+    isPositive: Boolean
 ) {
-    Card(
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (isPositive) Color.Green else MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+/**
+ * Permission request screen displayed when audio permission is needed.
+ */
+@Composable
+fun PermissionRequiredScreen(onRequestPermission: () -> Unit)
+{
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = Icons.Default.Lock,
+            contentDescription = "Microphone Permission",
+            modifier = Modifier.size(64.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "Audio permission required...",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "This app needs audio recording permission to capture and process WSPR signals from USB audio devices.",
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Button(
+            onClick = onRequestPermission,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                text = "Error",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onErrorContainer
-            )
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onErrorContainer
-            )
-            Button(
-                onClick = onDismiss,
-                modifier = Modifier.align(Alignment.End)
-            ) {
-                Text("Dismiss")
-            }
+            Text("Grant Permission")
         }
     }
 }
