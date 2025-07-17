@@ -911,9 +911,7 @@ fun DiagnosticsCard(onGetDiagnostics: () -> String)
                         text = diagnosticsText,
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
-                        modifier = Modifier
-                            .padding(12.dp)
-                            .verticalScroll(rememberScrollState())
+                        modifier = Modifier.padding(12.dp)
                     )
                 }
             }
