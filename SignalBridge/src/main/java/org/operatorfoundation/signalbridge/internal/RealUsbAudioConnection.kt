@@ -87,8 +87,13 @@ internal class RealUsbAudioConnection(
             }
 
             // Create and initialize the AudioRecordManager
-            val recordManager = AudioRecordManager()
-            val recordManagerResult = recordManager.initialize()
+            val recordManager = AudioRecordManager(context)
+
+            // Get likely sample rates for this USB device
+            val likelySampleRates = getLikelySampleRates()
+            Timber.d("Testing sample rates for USB device: $likelySampleRates")
+
+            val recordManagerResult = recordManager.initialize(likelySampleRates)
 
             if (recordManagerResult.isSuccess)
             {
@@ -361,6 +366,24 @@ internal class RealUsbAudioConnection(
 
         } catch (exception: Exception) {
             Timber.e(exception, "Error handling real device disconnection")
+        }
+    }
+
+    /**
+     * Gets likely sample rates for this USB device using the discovery service.
+     */
+    private fun getLikelySampleRates(): List<Int>
+    {
+        return try
+        {
+            val discovery = UsbDeviceDiscovery(context, usbManager)
+            discovery.detectLikelySampleRates(usbDevice)
+        }
+        catch (exception: Exception)
+        {
+            Timber.w(exception, "Could not detect likely sample rates, using defaults")
+            // Fallback to common rates
+            listOf(48000, 44100, 32000, 22050, 16000, 12000)
         }
     }
 

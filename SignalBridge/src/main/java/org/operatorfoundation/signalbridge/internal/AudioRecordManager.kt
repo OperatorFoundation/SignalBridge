@@ -1,9 +1,13 @@
 package org.operatorfoundation.signalbridge.internal
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -11,7 +15,6 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import timber.log.Timber
-import kotlin.coroutines.coroutineContext
 
 import org.operatorfoundation.signalbridge.exceptions.AudioRecordException
 
@@ -29,7 +32,7 @@ import org.operatorfoundation.signalbridge.exceptions.AudioRecordException
  * - State management beyond AudioRecord
  * - Audio output/playback
  */
-internal class AudioRecordManager
+internal class AudioRecordManager(private val context: Context)
 {
     companion object
     {
@@ -52,24 +55,26 @@ internal class AudioRecordManager
     private var audioRecord: AudioRecord? = null
     private var workingAudioSource: Int = -1
     private var bufferSize: Int = 0
+    private var detectedSampleRate: Int = SAMPLE_RATE // Will be updated during initialization
 
     /**
-     * Tests multiple audio sources and initializes AudioRecord with the first working one
+     * Tests multiple audio sources and initializes AudioRecord with the first working one.
+     * @param candidateSampleRates List of sample rates to test, in order of preference.
      */
-    suspend fun initialize(): AudioRecordInitResult
+    suspend fun initialize(candidateSampleRates: List<Int> = listOf(48000, 44100, 32000, 12000)): AudioRecordInitResult
     {
-        Timber.d("Initializing AudioRecord with compatibility testing")
+        Timber.d("Initializing AudioRecord")
 
         // Test each audio source until we find one that works
         for (audioSource in AUDIO_SOURCES_TO_TEST)
         {
             Timber.d("Testing audio source: $audioSource")
 
-            val result = tryInitializeWithSource(audioSource)
+            val result = tryInitializeWithSource(audioSource, candidateSampleRates)
             if (result.isSuccess)
             {
                 workingAudioSource = audioSource
-                Timber.i("AudioRecord initialized successfully with source: $audioSource")
+                Timber.i("AudioRecord initialized successfully with source: $audioSource, rate: ${detectedSampleRate}Hz")
                 return result
             }
             else
@@ -78,7 +83,7 @@ internal class AudioRecordManager
             }
         }
 
-        // All sources failed - this means AudioRecord cannot access USB audio
+        // All sources failed
         Timber.e("All audio sources failed - AudioRecord cannot access USB audio")
         return AudioRecordInitResult.AllSourcesFailed(
             testedSources = AUDIO_SOURCES_TO_TEST,
@@ -87,48 +92,99 @@ internal class AudioRecordManager
     }
 
     /**
-     * Attempts to initialize AudioRecord with a specific audio source
+     * Attempts to initialize AudioRecord with a specific audio source, testing multiple sample rates.
      */
     @SuppressLint("MissingPermission")
-    private fun tryInitializeWithSource(audioSource: Int): AudioRecordInitResult
+    private fun tryInitializeWithSource(audioSource: Int, candidateSampleRates: List<Int>): AudioRecordInitResult
+    {
+        Timber.d("Testing audio source $audioSource with ${candidateSampleRates.size} sample rates")
+
+        // Test each sample rate until we find one that works
+        for (testRate in candidateSampleRates)
+        {
+            Timber.v("Testing sample rate: ${testRate}Hz")
+
+            val result = tryInitializeWithSourceAndRate(audioSource, testRate)
+            if (result.isSuccess)
+            {
+                detectedSampleRate = testRate
+                Timber.i("Found working configuration: source=$audioSource, rate=${testRate}Hz")
+                return result
+            }
+        }
+
+        return AudioRecordInitResult.SourceFailed(
+            audioSource = audioSource,
+            errorMessage = "No working sample rate found among $candidateSampleRates for source $audioSource"
+        )
+    }
+
+    @SuppressLint("MissingPermission")
+    fun tryInitializeWithSourceAndRate(audioSource: Int, sampleRate: Int): AudioRecordInitResult
     {
         return try
         {
+            // Check for RECORD_AUDIO permission first
+            val permissionCheck = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            )
+
+            if (permissionCheck != PackageManager.PERMISSION_GRANTED)
+            {
+                return AudioRecordInitResult.SourceFailed(
+                    audioSource = audioSource,
+                    errorMessage = "RECORD_AUDIO permission not granted"
+                )
+            }
+
             // Calculate buffer size for this configuration
-            val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
+            val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, CHANNEL_CONFIG, AUDIO_FORMAT)
 
             if (minBufferSize == AudioRecord.ERROR_BAD_VALUE || minBufferSize == AudioRecord.ERROR)
             {
                 return AudioRecordInitResult.SourceFailed(
                     audioSource = audioSource,
-                    errorMessage = "Invalid audio configuration for source $audioSource"
+                    errorMessage = "Invalid audio configuration for source $audioSource at ${sampleRate}Hz"
                 )
             }
 
             // Use optimal buffer size
-            bufferSize = calculateOptimalBufferSize(minBufferSize)
+            val calculatedBufferSize = calculateOptimalBufferSize(minBufferSize)
 
-            // Create AudioRecord instance
-            val testAudioRecord = AudioRecord(
-                audioSource,
-                SAMPLE_RATE,
-                CHANNEL_CONFIG,
-                AUDIO_FORMAT,
-                bufferSize
-            )
+            // Create AudioRecord instance - this call requires RECORD_AUDIO permission
+            val testAudioRecord = try {
+                AudioRecord(
+                    audioSource,
+                    sampleRate,
+                    CHANNEL_CONFIG,
+                    AUDIO_FORMAT,
+                    calculatedBufferSize
+                )
+            }
+            catch (securityException: SecurityException)
+            {
+                return AudioRecordInitResult.SourceFailed(
+                    audioSource = audioSource,
+                    errorMessage = "SecurityException creating AudioRecord: ${securityException.message}",
+                    cause = securityException
+                )
+            }
 
             // Check if initialization was successful
             if (testAudioRecord.state == AudioRecord.STATE_INITIALIZED)
             {
+                // Success - store the AudioRecord and buffer size
                 audioRecord = testAudioRecord
+                bufferSize = calculatedBufferSize  // Store for later use in startRecording()
 
                 val recordInfo = AudioRecordInfo(
                     state = testAudioRecord.state,
                     audioSource = audioSource,
-                    sampleRate = SAMPLE_RATE,
+                    sampleRate = sampleRate, // This is now the actual working rate
                     channelConfig = CHANNEL_CONFIG,
                     audioFormat = AUDIO_FORMAT,
-                    bufferSize = bufferSize,
+                    bufferSize = calculatedBufferSize,
                     minBufferSize = minBufferSize
                 )
 
@@ -143,18 +199,16 @@ internal class AudioRecordManager
                 testAudioRecord.release()
                 AudioRecordInitResult.SourceFailed(
                     audioSource = audioSource,
-                    errorMessage = "AudioRecord state: ${testAudioRecord.state}"
+                    errorMessage = "AudioRecord state: ${testAudioRecord.state} at ${sampleRate}Hz"
                 )
             }
 
         }
         catch (exception: Exception)
         {
-            Timber.e(exception, "Exception testing audio source $audioSource")
-
             AudioRecordInitResult.SourceFailed(
                 audioSource = audioSource,
-                errorMessage = "Exception: ${exception.message}",
+                errorMessage = "Exception at ${sampleRate}Hz: ${exception.message}",
                 cause = exception
             )
         }
@@ -199,7 +253,7 @@ internal class AudioRecordManager
                         val rawSamples = RawAudioSamples(
                             samples = sampleBuffer.copyOf(samplesRead),
                             timestamp = System.currentTimeMillis(),
-                            sampleRate = SAMPLE_RATE
+                            sampleRate = detectedSampleRate
                         )
 
                         // Emit raw samples - no processing here
@@ -387,7 +441,8 @@ internal class AudioRecordManager
 data class RawAudioSamples(
     val samples: ShortArray,
     val timestamp: Long,
-    val sampleRate: Int
+    val sampleRate: Int,
+    val targetSampleRate: Int = 12000
 )
 {
     override fun equals(other: Any?): Boolean

@@ -92,6 +92,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                 val usbConnection = connectionResult.getOrThrow()
                 currentUsbConnection = usbConnection
 
+                startAudioLevelMonitoring()
+
                 // 2: Create the WSPR audio source
                 val audioSource = SignalBridgeWSPRAudioSource(
                     usbAudioConnection = usbConnection,
@@ -167,6 +169,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
             {
                 Timber.e(exception, "Error during disconnection")
                 updateErrorMessage("Disconnect failed: ${exception.message}")
+            }
+        }
+    }
+
+    private fun startAudioLevelMonitoring()
+    {
+        val connection = currentUsbConnection ?: return
+
+        viewModelScope.launch {
+            connection.getAudioLevel().collect { levelInfo ->
+                _uiState.update {
+                    it.copy(
+                        audioLevel = levelInfo,
+                        isReceivingAudio = levelInfo.currentLevel > 0.01f // 1% threshold
+                    )
+                }
             }
         }
     }

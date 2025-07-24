@@ -19,6 +19,10 @@ data class MainUiState(
     val availableDevices: List<UsbAudioDevice> = emptyList(),
     val connectedDevice: UsbAudioDevice? = null,
 
+    // Audio monitoring
+    val audioLevel: AudioLevelInfo? = null,
+    val isReceivingAudio: Boolean = false,
+
     // WSPR Station Status
     val isWSPRStationActive: Boolean = false,
     val stationState: WSPRStationState? = null,

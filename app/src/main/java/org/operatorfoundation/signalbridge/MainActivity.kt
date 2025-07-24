@@ -31,6 +31,7 @@ import org.operatorfoundation.audiocoder.*
 import org.operatorfoundation.audiocoder.models.WSPRCycleInformation
 import org.operatorfoundation.audiocoder.models.WSPRDecodeResult
 import org.operatorfoundation.audiocoder.models.WSPRStationState
+import org.operatorfoundation.signalbridge.models.AudioLevelInfo
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import org.operatorfoundation.signalbridge.ui.theme.SignalBridgeDemoTheme
 import timber.log.Timber
@@ -121,7 +122,6 @@ fun WSPRStationDemoApp(viewModel: MainViewModel)
                 uiState = uiState,
                 onConnectToDevice = { device -> viewModel.connectToDevice(device) },
                 onDisconnect = { viewModel.disconnect() },
-                onManualDecode = { viewModel.triggerManualDecode() },
                 onEncodeWSPR = { callsign, gridSquare, power -> viewModel.encodeWSPRSignal(callsign, gridSquare, power) },
                 onShareLastFile = { viewModel.shareLastWSPRFile() },
                 onGetDiagnostics = { viewModel.getDiagnosticInformation() }
@@ -139,7 +139,6 @@ fun WSPRStationMainScreen(
     uiState: MainUiState,
     onConnectToDevice: (UsbAudioDevice) -> Unit,
     onDisconnect: () -> Unit,
-    onManualDecode: () -> Unit,
     onEncodeWSPR: (String, String, Int) -> Unit,
     onShareLastFile: () -> Unit,
     onGetDiagnostics: () -> String
@@ -172,14 +171,22 @@ fun WSPRStationMainScreen(
                 )
             }
 
+            // Audio level monitoring (when connected)
+            if (uiState.connectedDevice != null)
+            {
+                item {
+                    AudioLevelIndicator(
+                        audioLevel = uiState.audioLevel,
+                        isReceivingAudio = uiState.isReceivingAudio
+                    )
+                }
+            }
+
             // WSPR timing and controls (only when connected)
             if (uiState.isReadyForOperation)
             {
                 item {
-                    WSPRTimingCard(
-                        uiState = uiState,
-                        onManualDecode = onManualDecode
-                    )
+                    WSPRTimingCard(uiState = uiState)
                 }
             }
 
@@ -407,8 +414,7 @@ fun DeviceManagementSection(
  */
 @Composable
 fun WSPRTimingCard(
-    uiState: MainUiState,
-    onManualDecode: () -> Unit
+    uiState: MainUiState
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -425,19 +431,6 @@ fun WSPRTimingCard(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
-
-                Button(
-                    onClick = onManualDecode,
-                    enabled = uiState.cycleInformation?.isDecodeWindowOpen == true
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Manual Decode",
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Manual Decode")
-                }
             }
 
             uiState.cycleInformation?.let { cycleInfo ->
@@ -857,6 +850,44 @@ fun WSPREncodingCard(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun AudioLevelIndicator(audioLevel: AudioLevelInfo?, isReceivingAudio: Boolean)
+{
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isReceivingAudio)
+                MaterialTheme.colorScheme.primaryContainer
+            else
+                MaterialTheme.colorScheme.surfaceVariant
+        )
+    )
+    {
+        Column(modifier = Modifier.padding(12.dp))
+        {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            )
+            {
+                Text("Audio Input")
+                Text(if (isReceivingAudio) "🔊 ACTIVE" else "🔇 SILENT")
+            }
+
+            audioLevel?.let { level ->
+                LinearProgressIndicator(
+                    progress = level.currentLevel,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "Level: ${(level.currentLevel * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
     }

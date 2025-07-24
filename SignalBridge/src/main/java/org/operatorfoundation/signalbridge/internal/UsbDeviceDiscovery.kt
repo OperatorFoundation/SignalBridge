@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
+import android.media.AudioManager
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -256,6 +257,56 @@ internal class UsbDeviceDiscovery(private val context: Context, private val usbM
         // Stub, for now we'll assume most USB audio devices support output
         // TODO: This requires more detailed USB descriptor analysis for accuracy
         return true
+    }
+
+    /**
+     * Determines the most likely sample rates for this USB audio device.
+     * Uses heuristics based on device characteristics and system preferences.
+     */
+    fun detectLikelySampleRates(device: UsbDevice): List<Int>
+    {
+        val systemPreferred = getSystemPreferredSampleRate()
+
+        // Base our guess on device characteristics
+        val likelyRates = when {
+            device.vendorId in professionalVendors -> {
+                listOf(systemPreferred, 48000, 96000, 44100, 32000, 22050)
+            }
+
+            // Consumer devices usually stick to standard rates
+            device.vendorId in KNOWN_AUDIO_VENDORS -> {
+                listOf(systemPreferred, 48000, 44100, 32000)
+            }
+
+            // Unknown devices - test common rates, system preferred first
+            else -> {
+                listOf(systemPreferred, 48000, 44100, 32000, 22050)
+            }
+        }.distinct()
+
+        Timber.d("Likely sample rates for ${device.productName}: $likelyRates")
+        return likelyRates
+    }
+
+    /**
+     * Gets the system's preferred sample rate for audio output.
+     */
+    private fun getSystemPreferredSampleRate(): Int
+    {
+        return try
+        {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val sampleRateStr = audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
+            val rate = sampleRateStr?.toInt() ?: 48000
+
+            Timber.d("System preferred sample rate: ${rate}Hz")
+            rate
+        }
+        catch (exception: Exception)
+        {
+            Timber.w(exception, "Could not get system sample rate, using 48kHz default")
+            48000 // Most common default
+        }
     }
 
     /**
