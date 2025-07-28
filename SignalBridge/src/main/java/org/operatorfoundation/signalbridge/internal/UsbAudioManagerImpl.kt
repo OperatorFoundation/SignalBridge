@@ -218,7 +218,7 @@ internal class UsbAudioManagerImpl(private val context: Context) : UsbAudioManag
         }
 
         // Test AudioRecord initialization
-        val audioRecordManager = AudioRecordManager()
+        val audioRecordManager = AudioRecordManager(context)
         val result = audioRecordManager.initialize()
 
         return AudioRecordDiagnostics(

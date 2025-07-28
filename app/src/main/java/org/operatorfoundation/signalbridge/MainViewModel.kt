@@ -425,6 +425,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
         // Monitor station operational state
         viewModelScope.launch {
             station.stationState.collect { state ->
+                Timber.d("=== WSPR Station State Change: ${state::class.simpleName} ===")
                 _uiState.update { it.copy(stationState = state) }
 
                 // Update status message based on station state

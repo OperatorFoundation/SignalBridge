@@ -2,6 +2,7 @@ package org.operatorfoundation.signalbridge
 
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import org.operatorfoundation.audiocoder.AudioResampler
 import org.operatorfoundation.audiocoder.WSPRAudioSource
 import org.operatorfoundation.audiocoder.WSPRAudioSourceException
 import org.operatorfoundation.audiocoder.WSPRConstants.WSPR_REQUIRED_SAMPLE_RATE
@@ -59,6 +60,11 @@ class SignalBridgeWSPRAudioSource(
      */
     private val performanceStatistics = AudioSourcePerformanceStatistics()
 
+    /**
+     * Audio resampler for converting USB device sample rates to WSPR's required 12kHz.
+     */
+    private var audioResampler: AudioResampler? = null
+
     // ========== WSPRAudioSource Implementation ==========
 
     override suspend fun initialize(): Result<Unit>
@@ -112,7 +118,7 @@ class SignalBridgeWSPRAudioSource(
                 val availableSamples = extractAvailableAudioSamples(availableSampleCount)
                 performanceStatistics.recordPartialRead(availableSamples.size)
 
-                Timber.v("Partial audio read: requested ${requiredSampleCount} samples, returned ${availableSamples.size}")
+//                Timber.v("Partial audio read: requested ${requiredSampleCount} samples, returned ${availableSamples.size}")
                 return availableSamples
             }
 
@@ -129,7 +135,8 @@ class SignalBridgeWSPRAudioSource(
         }
     }
 
-    override suspend fun cleanup() {
+    override suspend fun cleanup()
+    {
         Timber.d("Cleaning up SignalBridge WSPR audio source")
 
         try
@@ -141,6 +148,10 @@ class SignalBridgeWSPRAudioSource(
 
             // Clear audio buffer
             audioSampleBuffer.clear()
+
+            // Reset reseampler state
+            audioResampler?.reset()
+            audioResampler = null
 
             // Update status
             currentStatus = WSPRAudioSourceStatus.createNonOperationalStatus("Cleaned up")
@@ -155,14 +166,16 @@ class SignalBridgeWSPRAudioSource(
         }
     }
 
-    override suspend fun getSourceStatus(): WSPRAudioSourceStatus {
+    override suspend fun getSourceStatus(): WSPRAudioSourceStatus
+    {
         // Update status with current buffer information
         val bufferStatus = if (currentStatus.isOperational)
         {
             val bufferDurationMs = calculateBufferDurationMilliseconds()
             val bufferUtilizationPercent = calculateBufferUtilizationPercentage()
+            val resamplerInfo = audioResampler?.let { " [Resampling]" } ?: ""
 
-            "Streaming: ${bufferDurationMs}ms buffered (${bufferUtilizationPercent}% full)"
+            "Streaming: ${bufferDurationMs}ms buffered (${bufferUtilizationPercent}% full)${resamplerInfo}"
         }
         else
         {
@@ -196,9 +209,26 @@ class SignalBridgeWSPRAudioSource(
                 Timber.d("Starting background audio collection from SignalBridge")
 
                 usbAudioConnection.startRecording().collect { audioData ->
+                    // Create resampler if needed
+                    if (audioResampler == null && audioData.sampleRate != WSPR_REQUIRED_SAMPLE_RATE)
+                    {
+                        audioResampler = AudioResampler(audioData.sampleRate, WSPR_REQUIRED_SAMPLE_RATE)
+                        Timber.i("Created audio resampler: ${audioData.sampleRate}Hz -> ${WSPR_REQUIRED_SAMPLE_RATE}Hz")
+                    }
+
+                    // Resample if necessary
+                    val processedSamples = if (audioResampler != null)
+                    {
+                        audioResampler!!.resample(audioData.samples)
+                    }
+                    else
+                    {
+                        audioData.samples // No resampling needed
+                    }
+
                     // Add new samples to our buffer
-                    audioSampleBuffer.addAll(audioData.samples.toList())
-                    performanceStatistics.recordSamplesReceived(audioData.samples.size)
+                    audioSampleBuffer.addAll(processedSamples.toList())
+                    performanceStatistics.recordSamplesReceived(processedSamples.size)
 
                     // Manage buffer size to prevent memory issues
                     maintainBufferSize()
