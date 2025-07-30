@@ -200,10 +200,8 @@ fun WSPRStationMainScreen(
             }
 
             // Decode results (only when we have results)
-            if (uiState.decodeResults.isNotEmpty()) {
-                item {
-                    DecodeResultsCard(results = uiState.decodeResults)
-                }
+            item {
+                DecodeResultsCard(results = uiState.decodeResults)
             }
 
             // Diagnostics section
@@ -452,17 +450,59 @@ fun DecodeResultsCard(results: List<WSPRDecodeResult>)
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "Recent WSPR Decodes (${results.size})",
+                text = "WSPR Decodes (${results.size})",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
 
-            LazyColumn(
-                modifier = Modifier.heightIn(max = 300.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(results.take(10)) { result ->
-                    WSPRDecodeResultItem(result = result)
+            if (results.isEmpty())
+            {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
+                {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    )
+                    {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "No Signals",
+                            modifier = Modifier.size(32.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "No WSPR signals decoded yet",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Text(
+                            text = "Station is listening for WSPR transmissions...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+            else
+            {
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 300.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(results.take(10)) { result ->
+                        WSPRDecodeResultItem(result = result)
+                    }
                 }
             }
         }
