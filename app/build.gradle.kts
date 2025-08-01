@@ -42,6 +42,11 @@ android {
 dependencies {
     implementation(project(":SignalBridge"))
 
+    implementation("com.github.OperatorFoundation:AudioCoderAndroid:main") // Radio codec (WSPR) Library
+    implementation("com.github.OperatorFoundation:TransmissionAndroid:a54bdf05ef") // Serial communications
+
+    // 3rd party libraries
+    implementation(libs.usb.serial.android)
     implementation(libs.timber)
 
     // Jetpack Compose
@@ -63,9 +68,6 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-
-//    implementation(libs.audiocoderandroid) // NOTE: This relies on the main-SNAPSHOT (dev) tag
-    implementation("com.github.OperatorFoundation:AudioCoderAndroid:main")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

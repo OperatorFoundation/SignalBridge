@@ -2,9 +2,9 @@ package org.operatorfoundation.signalbridge
 
 import android.app.Application
 import android.content.Intent
-import android.os.Message
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hoho.android.usbserial.driver.UsbSerialDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -14,23 +14,34 @@ import org.operatorfoundation.audiocoder.models.WSPRStationConfiguration
 import org.operatorfoundation.audiocoder.models.WSPRStationState
 import org.operatorfoundation.signalbridge.models.AudioBufferConfiguration
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
+import org.operatorfoundation.transmission.SerialConnection
+import org.operatorfoundation.transmission.SerialConnectionFactory
 import timber.log.Timber
 import java.io.File
 
 /**
- * ViewModel for the main demo activity.
+ * ViewModel that integrates three libraries:
+ * - SignalBridge: USB audio device management
+ * - AudioCoder: WSPR processing and timing
+ * - TransmissionAndroid: Serial communication with custom radio
  *
- * This ViewModel manages the state of USB audio device discovery, connection,
- * and recording operations. It serves as the business logic layer between
- * the UI and the USB Audio Library.
+ * This ViewModel manages USB audio input as well as serial radio transmission.
  */
 class MainViewModel(application: Application) : AndroidViewModel(application)
 {
     // ========== Library Components ==========
+
+    // AudioCoder components
     private val wsprFileManager = WSPRFileManager(application)
+    private var wsprStation: WSPRStation? = null
+
+    // SignalBridge components
     private val usbAudioManager = UsbAudioManager.create(application)
     private var currentUsbConnection: UsbAudioConnection? = null
-    private var wsprStation: WSPRStation? = null
+
+    // TransmissionAndroid components
+    private val serialConnectionFactory = SerialConnectionFactory(application)
+    private var currentSerialConnection: SerialConnection? = null
 
     // ========== UI State ==========
     private val _uiState = MutableStateFlow(MainUiState())
@@ -38,29 +49,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
 
     init
     {
-        startDeviceDiscovery()
+        startUSBAudioDeviceDiscovery()
+        startSerialDeviceDiscovery()
     }
 
-    // ========== USB Device Management ==========
+    // ========== USB Audio Device Management (Signal Bridge) ==========
 
     /**
      * Starts continuous discovery of USB audio devices.
-     * Updates UI state with available devices as they are found.
      */
-    private fun startDeviceDiscovery()
+    private fun startUSBAudioDeviceDiscovery()
     {
         viewModelScope.launch {
             try
             {
                 usbAudioManager.discoverDevices().collect { devices ->
                     Timber.d("Discovered ${devices.size} USB audio devices")
-                    _uiState.update { it.copy(availableDevices = devices) }
+                    _uiState.update { it.copy(availableUsbDevices = devices) }
                 }
             }
             catch (exception: Exception)
             {
-                Timber.e(exception, "Error during device discovery")
-                updateErrorMessage("Device discovery failed: ${exception.message}")
+                Timber.e(exception, "Error during USB audio device discovery")
+                updateErrorMessage("USB audio device discovery failed: ${exception.message}")
             }
         }
     }
@@ -74,12 +85,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
      * 3. Initializes and starts the WSPR station
      * 4. Begins automatic WSPR timing and decoding
      */
-    fun connectToDevice(device: UsbAudioDevice)
+    fun connectToUSBAudioDevice(device: UsbAudioDevice)
     {
         viewModelScope.launch {
             try
             {
-                // 1: Connect
+                // 1: Connect to audio device
                 val connectionResult = usbAudioManager.connectToDevice(device)
 
                 if (connectionResult.isFailure)
@@ -117,33 +128,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                 // 5: Begin monitoring WSPR station
                 startWSPRStationMonitoring()
 
-                updateStatusMessage("WSPR station active on ${device.displayName}")
+                updateStatusMessage("USB audio connected - WSPR station active")
                 _uiState.update {
                     it.copy(
-                        connectedDevice = device,
-                        isWSPRStationActive = true
+                        connectedUsbDevice = device,
+                        isWSPRStationActive = true,
+                        decodeResults = emptyList(), // Clear previous results
+                        decodeFailures = emptyList() // Clear previous failures
                     )
                 }
 
-                Timber.i("WSPR station successfully started on device: ${device.displayName}")
+                Timber.i("WSPR station successfully listening to USB device: ${device.displayName}")
             }
             catch (exception: Exception)
             {
-                Timber.e(exception, "Failed to connect and start WSPR station")
-                updateErrorMessage("Connection failed: ${exception.message}")
+                Timber.e(exception, "Failed to connect to USB audio device and start WSPR monitoring station")
+                updateErrorMessage("USB audio connection failed: ${exception.message}")
             }
         }
     }
 
     /**
-     * Disconnects from the current device and stops WSPR station operation.
+     * Disconnects from the current USB audio device and stops WSPR monitoring station operation.
      */
-    fun disconnect()
+    fun disconnectUSBAudio()
     {
         viewModelScope.launch {
             try
             {
-                updateStatusMessage("Disconnecting...")
+                updateStatusMessage("Disconnecting USB audio...")
 
                 // Stop WSPR station
                 wsprStation?.stopStation()
@@ -155,24 +168,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
 
                 _uiState.update {
                     it.copy(
-                        connectedDevice = null,
+                        connectedUsbDevice = null,
                         isWSPRStationActive = false,
                         stationState = null,
                         cycleInformation = null,
-                        decodeResults = emptyList()
+                        decodeResults = emptyList(),
+                        decodeFailures = emptyList(),
+                        audioLevel = null,
+                        isReceivingAudio = false
                     )
                 }
 
-                updateStatusMessage("Disconnected successfully")
+                updateStatusMessage("USB audio disconnected")
             }
             catch (exception: Exception)
             {
-                Timber.e(exception, "Error during disconnection")
-                updateErrorMessage("Disconnect failed: ${exception.message}")
+                Timber.e(exception, "Error during USB disconnection")
+                updateErrorMessage("USB disconnect failed: ${exception.message}")
             }
         }
     }
 
+    /**
+     * Monitors audio levels from the USB connection.
+     */
     private fun startAudioLevelMonitoring()
     {
         val connection = currentUsbConnection ?: return
@@ -189,16 +208,239 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // ========== WSPR Encoding and File Management ==========
+    // ========== WSPR Station Monitoring (AudioCoder) ==========
 
     /**
-     * Generates a WSPR signal and saves it as a WAV file.
-     *
-     * This method:
-     * 1. Validates the input parameters
-     * 2. Generates the WSPR signal using the AudioCoder library
-     * 3. Saves the signal as a WAV file with metadata
-     * 4. Updates the UI state with the result
+     * Starts monitoring the WSPR station state and results.
+     */
+    private fun startWSPRStationMonitoring()
+    {
+        val station = wsprStation ?: return
+
+        // Monitor station operational state
+        viewModelScope.launch {
+            station.stationState.collect { state ->
+                Timber.d("=== WSPR Station State Change: ${state::class.simpleName} ===")
+                _uiState.update { it.copy(stationState = state) }
+
+                // Update status message based on station state
+                val statusMessage = when (state)
+                {
+                    is WSPRStationState.Running -> "WSPR station running - monitoring for signals"
+                    is WSPRStationState.WaitingForNextWindow -> "Next decode in ${state.windowInfo.secondsUntilWindow}s"
+                    is WSPRStationState.CollectingAudio -> "Collecting WSPR audio..."
+                    is WSPRStationState.ProcessingAudio -> "Decoding WSPR signals..."
+                    is WSPRStationState.DecodeCompleted -> "Decode complete: ${state.decodedSignalCount} signal(s) found"
+                    is WSPRStationState.Error -> state.errorDescription
+                    else -> "WSPR station: ${state::class.simpleName}"
+                }
+
+                if (state is WSPRStationState.Error)
+                {
+                    updateErrorMessage(statusMessage)
+
+                    val failure = DecodeFailure(
+                        id = System.currentTimeMillis(),
+                        timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
+                        reason = state.errorDescription,
+                        cyclePosition = _uiState.value.cycleInformation?.cyclePositionSeconds ?: 0,
+                        audioLevel = "${((_uiState.value.audioLevel?.currentLevel ?: 0f) * 100).toInt()}%"
+                    )
+
+                    _uiState.update { currentState ->
+                        currentState.copy(
+                            decodeFailures = (listOf(failure) + currentState.decodeFailures).take(20)
+                        )
+                    }
+                }
+                else
+                {
+                    updateStatusMessage(statusMessage)
+                }
+            }
+        }
+
+        // Monitor decode results
+        viewModelScope.launch {
+            station.decodeResults.collect { results ->
+                _uiState.update { it.copy(decodeResults = results) }
+
+                if (results.isNotEmpty())
+                {
+                    Timber.i("Received ${results.size} WSPR decode results")
+                    results.forEach { result ->
+                        Timber.i("WSPRL ${result.createSummaryLine()}")
+                    }
+                }
+            }
+        }
+
+        // Monitor cycle information for UI display
+        viewModelScope.launch {
+            station.cycleInformation.collect { cycleInformation ->
+                _uiState.update { it.copy(cycleInformation = cycleInformation) }
+            }
+        }
+    }
+
+    /**
+     * Triggers an immediate WSPR decode if timing conditions are suitable.
+     */
+    fun triggerManualDecode()
+    {
+        viewModelScope.launch {
+            val station = wsprStation
+            if (station == null)
+            {
+                updateErrorMessage("No WSPR station active")
+                return@launch
+            }
+
+            updateStatusMessage("Attempting manual WSPR decode...")
+
+            val decodeResult = station.requestImmediateDecode()
+
+            if (decodeResult.isSuccess)
+            {
+                val results = decodeResult.getOrThrow()
+                updateStatusMessage("Manual decode complete: ${results.size} signal(s) found")
+            }
+            else
+            {
+                val errorMessage = "Manual decode failed: ${decodeResult.exceptionOrNull()?.message}"
+                updateErrorMessage(errorMessage)
+
+                val failure = DecodeFailure(
+                    id = System.currentTimeMillis(),
+                    timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
+                    reason = "Manual decode: ${decodeResult.exceptionOrNull()?.message}",
+                    cyclePosition = _uiState.value.cycleInformation?.cyclePositionSeconds ?: 0,
+                    audioLevel = "${((_uiState.value.audioLevel?.currentLevel ?: 0f) * 100).toInt()}%"
+                )
+
+                _uiState.update { currentState ->
+                    currentState.copy(
+                        decodeFailures = (listOf(failure) + currentState.decodeFailures).take(20)
+                    )
+                }
+            }
+        }
+    }
+
+    // ========== Serial Device Management (TransmissionAndroid) ==========
+    /**
+     * Starts discovery of serial devices for custom radio connection.
+     */
+    private fun startSerialDeviceDiscovery()
+    {
+        viewModelScope.launch {
+            try
+            {
+                // Get available serial devices periodically
+                val devices = withContext(Dispatchers.IO) {
+                    serialConnectionFactory.findAvailableDevices()
+                }
+
+                _uiState.update { it.copy(                        availableSerialDevices = devices) }
+                Timber.d("Found ${devices.size} serial device(s)")
+            }
+            catch (exception: Exception)
+            {
+                Timber.e(exception, "Error during serial device discovery")
+                updateErrorMessage("Serial device discovery failed: ${exception.message}")
+            }
+        }
+    }
+
+    /**
+     * Connects to a serial device for custom radio communication.
+     */
+    fun connectToSerialDevice(driver: UsbSerialDriver)
+    {
+        viewModelScope.launch {
+            try
+            {
+                updateStatusMessage("Connecting to custom radio...")
+
+                serialConnectionFactory.createConnection(driver.device).collect { state ->
+                    when (state)
+                    {
+                        is SerialConnectionFactory.ConnectionState.Connected -> {
+                            currentSerialConnection = state.connection
+
+                            _uiState.update {
+                                it.copy(
+                                    connectedSerialDevice = driver,
+                                    serialConnectionState = state
+                                )
+                            }
+
+                            updateStatusMessage("Connected to custom radio: ${driver.device.deviceName}")
+                            Timber.i("Successfully connected to serial device: ${driver.device.deviceName}")
+                        }
+
+                        is SerialConnectionFactory.ConnectionState.Error -> {
+                            val errorMessage = "Serial connection failed: ${state.message}"
+                            updateErrorMessage(errorMessage)
+                            Timber.e("Serial connection failed: ${state.message}")
+                        }
+
+                        is SerialConnectionFactory.ConnectionState.RequestingPermission -> {
+                            updateStatusMessage("Requesting USB permission for radio...")
+                        }
+
+                        is SerialConnectionFactory.ConnectionState.Connecting -> {
+                            updateStatusMessage("Establishing serial connection...")
+                        }
+
+                        else -> { /* Handle other states if needed */ }
+                    }
+                }
+            }
+            catch (exception: Exception)
+            {
+                Timber.e(exception, "Error connecting to serial device")
+                updateErrorMessage("Serial connection failed: ${exception.message}")
+            }
+        }
+    }
+
+    /**
+     * Disconnects from the current serial device.
+     */
+    fun disconnectSerial()
+    {
+        viewModelScope.launch {
+            try
+            {
+                currentSerialConnection?.close()
+                currentSerialConnection = null
+                serialConnectionFactory.disconnect()
+
+                _uiState.update {
+                    it.copy(
+                        connectedSerialDevice = null,
+                        serialConnectionState = SerialConnectionFactory.ConnectionState.Disconnected,
+                        isTransmitting = false,
+                        transmissionStatus = "idle"
+                    )
+                }
+
+                updateStatusMessage("Disconnected from custom radio")
+                Timber.i("Disconnected from serial device")
+            }
+            catch (exception: Exception)
+            {
+                Timber.e(exception, "Error during serial disconnection")
+                updateErrorMessage("Serial disconnect failed: ${exception.message}")
+            }
+        }
+    }
+
+    // ========== WSPR Encoding and Transmissions ==========
+    /**
+     * Generates a WSPR signal and optionally sends transmission command to custom radio.
+     * Works with or without serial connection - always generates and saves WAV file.
      *
      * @param callsign Amateur radio callsign (e.g., "Q0QQQ")
      * @param gridSquare Maidenhead grid square (e.g., "FN31")
@@ -209,12 +451,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try
             {
+                _uiState.update { it.copy(isTransmitting = true, transmissionStatus = "generating") }
                 updateStatusMessage("Generating WSPR signal for $callsign...")
 
                 // Validate input parameters
                 val validationResult = validateWSPRParameters(callsign, gridSquare, power)
                 if (validationResult != null) {
                     updateErrorMessage(validationResult)
+                    _uiState.update { it.copy(isTransmitting = false, transmissionStatus = "idle") }
                     return@launch
                 }
 
@@ -232,10 +476,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                 if (wsprAudioData == null || wsprAudioData.isEmpty())
                 {
                     updateErrorMessage("Failed to generate WSPR signal - invalid parameters or encoding error")
+                    _uiState.update { it.copy(isTransmitting = false, transmissionStatus = "idle") }
                     return@launch
                 }
 
-                // Save as WAV file with metadata
+                // Save as WAV file for sharing/debugging
                 val savedFile = withContext(Dispatchers.IO)
                 {
                     wsprFileManager.saveWsprAsWav(
@@ -246,30 +491,76 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
 
-                if (savedFile != null)
+                _uiState.update { it.copy(lastGeneratedFile = savedFile) }
+
+                // If custom transmitter is connected, attempt transmission
+                if (currentSerialConnection != null)
                 {
-                    // Update UI state with successful generation
-                    _uiState.update { currentState ->
-                        currentState.copy(
-                            lastGeneratedFile = savedFile,
-                            statusMessage = "WSPR signal generated: ${savedFile.name}",
-                            errorMessage = null
-                        )
+                    _uiState.update { it.copy(transmissionStatus = "sending") }
+                    updateStatusMessage("Sending WSPR command to transmitter...")
+
+                    // Send transmission command to custom radio via serial
+                    // FIXME: Send correct command and values
+                    val success = withContext(Dispatchers.IO) {
+                        val command = "WSPR_TX:${callsign.trim().uppercase()},${gridSquare.trim().uppercase()},${power}"
+                        currentSerialConnection?.writeWithLengthPrefix(command.toByteArray(), 16) ?: false
                     }
 
-                    Timber.i("WSPR signal generated successfully: ${savedFile.name}")
+                    if (success)
+                    {
+                        _uiState.update { it.copy(transmissionStatus = "transmitting") }
+                        updateStatusMessage("Custom radio transmitting WSPR signal...")
 
+                        // FIXME: Wait for response from transmitter
+                        // Simulate transmission time (in real implementation, listen for radio feedback)
+                        withContext(Dispatchers.IO) {
+                            Thread.sleep(3000) // Shortened for demo
+                        }
+
+                        // Add to transmission history
+                        val newTransmission = TransmissionRecord(
+                            id = System.currentTimeMillis(),
+                            timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
+                            callsign = callsign.trim().uppercase(),
+                            gridSquare = gridSquare.trim().uppercase(),
+                            power = power,
+                            status = "success"
+                        )
+
+                        _uiState.update { currentState ->
+                            currentState.copy(
+                                transmissionStatus = "complete",
+                                transmissionHistory = (listOf(newTransmission) + currentState.transmissionHistory).take(20)
+                            )
+                        }
+
+                        updateStatusMessage("WSPR transmission complete")
+                    }
+                    else
+                    {
+                        updateErrorMessage("Failed to send command to transmitter")
+                        _uiState.update { it.copy(transmissionStatus = "complete") } // Still generated file successfully
+                        updateStatusMessage("WSPR signal generated (radio command failed)")
+                    }
                 }
                 else
                 {
-                    updateErrorMessage("Failed to save WSPR file to storage")
+                    // No radio connected - just generated file
+                    _uiState.update { it.copy(transmissionStatus = "complete") }
+                    updateStatusMessage("WSPR signal generated and saved to file")
                 }
 
+                // Reset status after delay
+                kotlinx.coroutines.delay(2000)
+                _uiState.update { it.copy(transmissionStatus = "idle", isTransmitting = false) }
+
+                Timber.i("WSPR signal generation completed")
             }
             catch (exception: Exception)
             {
-                Timber.e(exception, "Error generating WSPR signal")
+                Timber.e(exception, "Error during WSPR generation")
                 updateErrorMessage("WSPR generation failed: ${exception.message}")
+                _uiState.update { it.copy(isTransmitting = false, transmissionStatus = "idle") }
             }
         }
     }
@@ -412,100 +703,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update { it.copy(pendingShareIntent = null) }
     }
 
-    // ========== WSPR Station Monitoring ==========
-
-    /**
-     * Starts monitoring the WSPR station state and results.
-     * Updates the UI with real-time information about station operation.
-     */
-    private fun startWSPRStationMonitoring()
-    {
-        val station = wsprStation ?: return
-
-        // Monitor station operational state
-        viewModelScope.launch {
-            station.stationState.collect { state ->
-                Timber.d("=== WSPR Station State Change: ${state::class.simpleName} ===")
-                _uiState.update { it.copy(stationState = state) }
-
-                // Update status message based on station state
-                val statusMessage = when (state)
-                {
-                    is WSPRStationState.Running -> "WSPR station running - monitoring for signals"
-                    is WSPRStationState.WaitingForNextWindow -> "Next decode in ${state.windowInfo.secondsUntilWindow}s"
-                    is WSPRStationState.CollectingAudio -> "Collecting WSPR audio..."
-                    is WSPRStationState.ProcessingAudio -> "Decoding WSPR signals..."
-                    is WSPRStationState.DecodeCompleted -> "Decode complete: ${state.decodedSignalCount} signal(s) found"
-                    is WSPRStationState.Error -> state.errorDescription
-                    else -> "WSPR station: ${state::class.simpleName}"
-                }
-
-                if (state is WSPRStationState.Error)
-                {
-                    updateErrorMessage(statusMessage)
-                }
-                else
-                {
-                    updateStatusMessage(statusMessage)
-                }
-            }
-        }
-
-        // Monitor decode results
-        viewModelScope.launch {
-            station.decodeResults.collect { results ->
-                _uiState.update { it.copy(decodeResults = results) }
-
-                if (results.isNotEmpty())
-                {
-                    Timber.i("Received ${results.size} WSPR decode results")
-                    results.forEach { result ->
-                        Timber.i("WSPRL ${result.createSummaryLine()}")
-                    }
-                }
-            }
-        }
-
-        // Monitor cycle information for UI display
-        viewModelScope.launch {
-            station.cycleInformation.collect { cycleInformation ->
-                _uiState.update { it.copy(cycleInformation = cycleInformation) }
-            }
-        }
-    }
-
-    // ========== Manual Operations ==========
-
-    /**
-     * Triggers an immediate WSPR decode if timing conditions are suitable.
-     * This respects WSPR protocol timing and will only decode during valid windows
-     */
-    fun triggerManualDecode()
-    {
-        viewModelScope.launch {
-            val station = wsprStation
-            if (station == null)
-            {
-                updateErrorMessage("No WSPR station active")
-                return@launch
-            }
-
-            updateStatusMessage("Attempting manual WSPR decode...")
-
-            val decodeResult = station.requestImmediateDecode()
-
-            if (decodeResult.isSuccess)
-            {
-                val results = decodeResult.getOrThrow()
-                updateStatusMessage("Manual decode complete: ${results.size} signal(s) found")
-            }
-            else
-            {
-                val errorMessage = "Manual decode failed: ${decodeResult.exceptionOrNull()?.message}"
-                updateErrorMessage(errorMessage)
-            }
-        }
-    }
+    // ========== Diagnostics and Utilities ==========
 
     /**
      * Gets current status information from both libraries for diagnostics.
@@ -516,27 +714,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
             appendLine("=== WSPR Demo Diagnostic Information ===")
             appendLine()
 
-            // USB Audio Status
+
+            // SignalBridge USB Audio Status
             appendLine("SignalBridge USB Audio:")
-            val connectedDevice = _uiState.value.connectedDevice
-            if (connectedDevice != null)
+            val connectedUsbDevice = _uiState.value.connectedUsbDevice
+            if (connectedUsbDevice != null)
             {
-                appendLine("  Connected Device: ${connectedDevice.displayName}")
-                appendLine("  Device ID: ${connectedDevice.deviceId}")
+                appendLine("  Connected Device: ${connectedUsbDevice.displayName}")
+                appendLine("  Device ID: ${connectedUsbDevice.deviceId}")
                 appendLine("  USB Connection: Active")
+
+                val audioLevel = _uiState.value.audioLevel
+                if (audioLevel != null)
+                {
+                    appendLine("  Audio Level: ${(audioLevel.currentLevel * 100).toInt()}%")
+                    appendLine("  Peak Level: ${(audioLevel.peakLevel * 100).toInt()}%")
+                    appendLine("  Receiving Audio: ${_uiState.value.isReceivingAudio}")
+                }
             }
             else
             {
                 appendLine("  USB Connection: None")
+                appendLine("  Available Devices: ${_uiState.value.availableUsbDevices.size}")
             }
             appendLine()
 
-            // WSPR Station Status
+            // AudioCoder WSPR Station Status
             appendLine("AudioCoder WSPR Station:")
             val stationState = _uiState.value.stationState
             if (stationState != null)
             {
                 appendLine("  Station State: ${stationState::class.simpleName}")
+                appendLine("  Station Active: ${_uiState.value.isWSPRStationActive}")
 
                 when (stationState)
                 {
@@ -546,6 +755,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                         appendLine("  Error: ${stationState.errorDescription}")
                     else -> {}
                 }
+
+                val cycleInfo = _uiState.value.cycleInformation
+                if (cycleInfo != null)
+                {
+                    appendLine("  Cycle Position: ${cycleInfo.cyclePositionSeconds}s / 120s")
+                    appendLine("  Decode Window: ${if (cycleInfo.isDecodeWindowOpen) "OPEN" else "CLOSED"}")
+                    appendLine("  Transmission Window: ${if (cycleInfo.isInTransmissionWindow) "ACTIVE" else "INACTIVE"}")
+                }
+
+                appendLine("  Successful Decodes: ${_uiState.value.decodeResults.size}")
+                appendLine("  Decode Failures: ${_uiState.value.decodeFailures.size}")
             }
             else
             {
@@ -553,24 +773,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
             }
             appendLine()
 
-            // Cycle information
-            val cycleInformation = _uiState.value.cycleInformation
-
-            if (cycleInformation != null)
+            appendLine("TransmissionAndroid Serial:")
+            val connectedSerialDevice = _uiState.value.connectedSerialDevice
+            if (connectedSerialDevice != null)
             {
-                appendLine("WSPR Timing:")
-                appendLine("  Cycle Position: ${cycleInformation.cyclePositionSeconds}s / 120s")
-                appendLine("  Transmission Window: ${if (cycleInformation.isInTransmissionWindow) "Yes" else "No"}")
-                appendLine("  Decode Window Open: ${if (cycleInformation.isDecodeWindowOpen) "Yes" else "No"}")
-                appendLine("  ${cycleInformation.nextDecodeWindowInfo.humanReadableDescription}")
+                appendLine("  Connected Device: ${connectedSerialDevice.device.deviceName}")
+                appendLine("  Vendor ID: ${String.format("0x%04X", connectedSerialDevice.device.vendorId)}")
+                appendLine("  Product ID: ${String.format("0x%04X", connectedSerialDevice.device.productId)}")
+                appendLine("  Serial Connection: Active")
+                appendLine("  Connection State: ${_uiState.value.serialConnectionState::class.simpleName}")
             }
+            else
+            {
+                appendLine("  Serial Connection: None")
+                appendLine("  Available Devices: ${_uiState.value.availableSerialDevices.size}")
+            }
+            appendLine("  Transmissions: ${_uiState.value.transmissionHistory.size}")
             appendLine()
 
-            // Recent results
-            val results = _uiState.value.decodeResults
-            appendLine("Recent WSPR Decodes: ${results.size}")
-            results.take(5).forEach { result ->
-                appendLine("  ${result.createSummaryLine()}")
+            // Recent activity
+            appendLine("Recent Activity:")
+            _uiState.value.decodeResults.take(3).forEach { result ->
+                appendLine("  RX: ${result.createSummaryLine()}")
+            }
+            _uiState.value.transmissionHistory.take(3).forEach { tx ->
+                appendLine("  TX: ${tx.callsign} ${tx.gridSquare} ${tx.power}dBm at ${tx.timestamp}")
+            }
+
+            if (_uiState.value.decodeFailures.isNotEmpty()) {
+                appendLine()
+                appendLine("Recent Decode Failures:")
+                _uiState.value.decodeFailures.take(5).forEach { failure ->
+                    appendLine("  ${failure.timestamp}: ${failure.reason}")
+                }
             }
         }
     }
@@ -598,54 +833,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
     {
         // Validate callsign
         val trimmedCallsign = callsign.trim()
-
-        if (trimmedCallsign.isEmpty())
-        {
-            return "Callsign cannot be empty"
-        }
-
-        if (trimmedCallsign.length > 6)
-        {
-            return "Callsign too long (maximum 6 characters)"
-        }
-
-        if (!trimmedCallsign.matches(Regex("^[A-Z0-9/]+$")))
-        {
-            return "Callsign contains invalid characters (use A-Z, 0-9, / only)"
-        }
+        if (trimmedCallsign.isEmpty()) return "Callsign cannot be empty"
+        if (trimmedCallsign.length > 6) return "Callsign too long (maximum 6 characters)"
+        if (!trimmedCallsign.matches(Regex("^[A-Z0-9/]+$"))) return "Callsign contains invalid characters"
 
         // Validate grid square
         val trimmedGridSquare = gridSquare.trim()
-        if (trimmedGridSquare.isEmpty())
-        {
-            return "Grid square cannot be empty"
-        }
-
-        if (trimmedGridSquare.length < 4)
-        {
-            return "Grid square too short (minimum 4 characters)"
-        }
-
-        if (trimmedGridSquare.length > 6)
-        {
-            return "Grid square too long (maximum 6 characters)"
-        }
-
-        if (!trimmedGridSquare.matches(Regex("^[A-Z]{2}[0-9]{2}[A-Z]{0,2}$")))
-        {
-            return "Invalid grid square format (use format like FN31 or FN31pr)"
-        }
+        if (trimmedGridSquare.isEmpty()) return "Grid square cannot be empty"
+        if (trimmedGridSquare.length < 4) return "Grid square too short (minimum 4 characters)"
+        if (trimmedGridSquare.length > 6) return "Grid square too long (maximum 6 characters)"
+        if (!trimmedGridSquare.matches(Regex("^[A-Z]{2}[0-9]{2}[A-Z]{0,2}$"))) return "Invalid grid square format"
 
         // Validate power level
-        if (power < 0 || power > 60)
-        {
-            return "Power level must be between 0 and 60 dBm"
-        }
+        if (power < 0 || power > 60) return "Power level must be between 0 and 60 dBm"
 
-        // Check if power level is a valid WSPR power encoding
         val validPowerLevels = listOf(0, 3, 7, 10, 13, 17, 20, 23, 27, 30, 33, 37, 40, 43, 47, 50, 53, 57, 60)
-        if (!validPowerLevels.contains(power))
-        {
+        if (!validPowerLevels.contains(power)) {
             return "Power level $power is not a valid WSPR encoding (use: ${validPowerLevels.joinToString(", ")})"
         }
 
@@ -666,6 +869,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
             {
                 wsprStation?.stopStation()
                 currentUsbConnection?.disconnect()
+                currentSerialConnection?.close()
                 usbAudioManager.cleanup()
             }
             catch (exception: Exception)
