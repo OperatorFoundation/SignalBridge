@@ -4,11 +4,14 @@ import android.app.Application
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.lifecycleScope
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.operatorfoundation.audiocoder.*
 import org.operatorfoundation.audiocoder.models.WSPRStationConfiguration
 import org.operatorfoundation.audiocoder.models.WSPRStationState
@@ -330,24 +333,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
     // ========== Serial Device Management (TransmissionAndroid) ==========
     /**
      * Starts discovery of serial devices for custom radio connection.
+     * Continuously monitors for device connection/disconnection.
      */
     private fun startSerialDeviceDiscovery()
     {
         viewModelScope.launch {
             try
             {
-                // Get available serial devices periodically
-                val devices = withContext(Dispatchers.IO) {
-                    serialConnectionFactory.findAvailableDevices()
-                }
+                // Poll for devices periodically
+                while (true) {
+                    val devices = withContext(Dispatchers.IO) {
+                        serialConnectionFactory.findAvailableDevices()
+                    }
 
-                _uiState.update { it.copy(                        availableSerialDevices = devices) }
-                Timber.d("Found ${devices.size} serial device(s)")
+                    val currentDeviceCount = _uiState.value.availableSerialDevices.size
+
+                    if (devices.size != currentDeviceCount) {
+                        Timber.d("Serial device count changed: ${currentDeviceCount} -> ${devices.size}")
+                        _uiState.update { it.copy(availableSerialDevices = devices) }
+                    }
+
+                    // Poll every 2 seconds for new devices
+                    delay(2000)
+                }
             }
             catch (exception: Exception)
             {
                 Timber.e(exception, "Error during serial device discovery")
                 updateErrorMessage("Serial device discovery failed: ${exception.message}")
+
+                // Retry after a delay
+                delay(5000)
+                startSerialDeviceDiscovery() // Restart discovery
             }
         }
     }
@@ -875,6 +892,225 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
             catch (exception: Exception)
             {
                 Timber.e(exception, "Error during ViewModel cleanup")
+            }
+        }
+    }
+
+
+    // MARK: Test functions
+
+    /**
+     * Test function that sends a predetermined sequence of commands to the microcontroller.
+     * Each command waits for a response before proceeding to the next one.
+     */
+    fun runCommandSequenceTest()
+    {
+        viewModelScope.launch {
+            try
+            {
+                val connection = currentSerialConnection
+                if (connection == null) {
+                    Timber.w("No active connection for command sequence test")
+                    return@launch
+                }
+
+                Timber.i("=== Starting Command Sequence Test ===")
+
+                // Predefined command sequence
+                val commandSequence = listOf(
+                    "2",
+                    "1",
+                    "11NIFK",
+                    "3",
+                    "aa00aa",
+                    "2",
+                    "0",
+                    "4",
+                    "14095600",
+                    "5",
+                    "q",
+                    "q",
+                    "3",
+                    "1"
+                )
+
+                var sequenceSuccess = true
+
+                // Send each command and wait for response
+                for ((index, command) in commandSequence.withIndex()) {
+                    try {
+                        Timber.i("Sequence [${index + 1}/${commandSequence.size}]: Sending '$command'")
+
+                        // Send the command
+                        val sendSuccess = withContext(Dispatchers.IO) {
+                            connection.write(command)
+                        }
+
+                        if (!sendSuccess) {
+                            Timber.e("Failed to send command: $command")
+                            sequenceSuccess = false
+                            break
+                        }
+
+                        Timber.d("→ Sent: $command")
+
+                        // Wait for response with timeout
+                        val response = waitForResponse(connection, timeoutMs = 2000)
+
+                        if (response != null) {
+                            Timber.d("← Response: $response")
+                        } else {
+                            Timber.w("No response received for command: $command")
+                            // Continue anyway - some commands might not respond
+                        }
+
+                        // Brief pause between commands
+                        delay(500) // 500ms delay between commands
+
+                    } catch (e: Exception) {
+                        Timber.e(e, "Error during command sequence at step ${index + 1}: $command")
+                        sequenceSuccess = false
+                        break
+                    }
+                }
+
+                // Send final 'q' command after all responses received
+                if (sequenceSuccess) {
+                    Timber.i("Sequence complete, sending final 'q' command...")
+
+                    try {
+                        val finalSendSuccess = withContext(Dispatchers.IO) {
+                            connection.write("q")
+                        }
+
+                        if (finalSendSuccess) {
+                            Timber.d("→ Final command sent: q")
+
+                            val finalResponse = waitForResponse(connection, timeoutMs = 2000)
+                            if (finalResponse != null) {
+                                Timber.d("← Final response: $finalResponse")
+                            }
+
+                            Timber.i("=== Command Sequence Test COMPLETED ===")
+                        } else {
+                            Timber.e("Failed to send final 'q' command")
+                        }
+
+                    } catch (e: Exception) {
+                        Timber.e(e, "Error sending final command")
+                    }
+                } else {
+                    Timber.e("=== Command Sequence Test FAILED ===")
+                }
+
+            } catch (e: Exception) {
+                Timber.e(e, "Fatal error during command sequence test")
+            }
+        }
+    }
+
+    /**
+     * Waits for a response from the serial connection with a specified timeout.
+     *
+     * @param connection The serial connection to read from
+     * @param timeoutMs Timeout in milliseconds
+     * @return The received response string, or null if timeout/error
+     */
+    private suspend fun waitForResponse(connection: SerialConnection, timeoutMs: Long): String? {
+        return withContext(Dispatchers.IO) {
+            withTimeoutOrNull(timeoutMs) {
+                val buffer = StringBuilder()
+                val startTime = System.currentTimeMillis()
+
+                while (System.currentTimeMillis() - startTime < timeoutMs) {
+                    try {
+                        val data = connection.readAvailable()
+
+                        if (data != null && data.isNotEmpty()) {
+                            for (byte in data) {
+                                val char = byte.toInt().toChar()
+
+                                when {
+                                    char == '\n' || char == '\r' -> {
+                                        if (buffer.isNotEmpty()) {
+                                            return@withTimeoutOrNull buffer.toString().trim()
+                                        }
+                                    }
+                                    char.isISOControl().not() && char != '\u0000' -> {
+                                        buffer.append(char)
+                                    }
+                                }
+                            }
+
+                            // If we got some data but no line ending yet, continue reading
+                            if (buffer.isNotEmpty()) {
+                                delay(10) // Small delay before checking for more data
+                            }
+                        } else {
+                            delay(50) // No data available, wait a bit
+                        }
+
+                    } catch (e: Exception) {
+                        Timber.w("Error while waiting for response: ${e.message}")
+                        delay(100)
+                    }
+                }
+
+                // Timeout - return partial data if any
+                if (buffer.isNotEmpty()) {
+                    buffer.toString().trim()
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    /**
+     * Alternative version that waits for any response (not necessarily line-terminated)
+     * Useful if your microcontroller doesn't send newlines
+     */
+    private suspend fun waitForAnyResponse(connection: SerialConnection, timeoutMs: Long): String? {
+        return withContext(Dispatchers.IO) {
+            withTimeoutOrNull(timeoutMs) {
+                val buffer = StringBuilder()
+                val startTime = System.currentTimeMillis()
+                var lastDataTime = startTime
+
+                while (System.currentTimeMillis() - startTime < timeoutMs) {
+                    try {
+                        val data = connection.readAvailable()
+
+                        if (data != null && data.isNotEmpty()) {
+                            lastDataTime = System.currentTimeMillis()
+
+                            for (byte in data) {
+                                val char = byte.toInt().toChar()
+                                if (char.isISOControl().not() && char != '\u0000') {
+                                    buffer.append(char)
+                                }
+                            }
+                        } else {
+                            // If we have data and haven't received more for 200ms, consider it complete
+                            if (buffer.isNotEmpty() &&
+                                System.currentTimeMillis() - lastDataTime > 200) {
+                                return@withTimeoutOrNull buffer.toString().trim()
+                            }
+                            delay(50)
+                        }
+
+                    } catch (e: Exception) {
+                        Timber.w("Error while waiting for any response: ${e.message}")
+                        delay(100)
+                    }
+                }
+
+                // Return whatever we got
+                if (buffer.isNotEmpty()) {
+                    buffer.toString().trim()
+                } else {
+                    null
+                }
             }
         }
     }

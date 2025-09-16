@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -127,7 +128,8 @@ fun WSPRStationDemoApp(viewModel: MainViewModel)
                 onShareLastFile = { viewModel.shareLastWSPRFile() },
                 onTriggerManualDecode = { viewModel.triggerManualDecode() },
                 // Diagnostics
-                onGetDiagnostics = { viewModel.getDiagnosticInformation() }
+                onGetDiagnostics = { viewModel.getDiagnosticInformation() },
+                onRunCommandSequenceTest = { viewModel.runCommandSequenceTest() }
             )
         }
     }
@@ -147,7 +149,8 @@ fun WSPRStationMainScreen(
     onEncodeWSPR: (String, String, Int) -> Unit,
     onShareLastFile: () -> Unit,
     onTriggerManualDecode: () -> Unit,
-    onGetDiagnostics: () -> String
+    onGetDiagnostics: () -> String,
+    onRunCommandSequenceTest: () -> Unit
 ) {
     // Color palette from theme
     val colors = WSPRColors
@@ -221,7 +224,8 @@ fun WSPRStationMainScreen(
                     onConnectToSerialDevice = onConnectToSerialDevice,
                     onDisconnectSerial = onDisconnectSerial,
                     onEncodeWSPR = onEncodeWSPR,
-                    onShareLastFile = onShareLastFile
+                    onShareLastFile = onShareLastFile,
+                    onRunCommandSequenceTest = onRunCommandSequenceTest
                 )
             }
 
@@ -235,13 +239,13 @@ fun WSPRStationMainScreen(
                 }
             }
 
-            // Diagnostics section (collapsible)
-            item {
-                DiagnosticsCard(
-                    onGetDiagnostics = onGetDiagnostics,
-                    colors = colors
-                )
-            }
+//            // Diagnostics section (collapsible)
+//            item {
+//                DiagnosticsCard(
+//                    onGetDiagnostics = onGetDiagnostics,
+//                    colors = colors
+//                )
+//            }
         }
     }
 }
@@ -253,17 +257,19 @@ fun WSPRStationMainScreen(
 fun WSPRStationHeader(uiState: MainUiState, colors: WSPRColors)
 {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding(), // Avoid status bar overlap
         colors = CardDefaults.cardColors(
             containerColor = when {
                 uiState.hasErrors -> colors.error
                 uiState.isReadyForOperation -> colors.primary
-                else -> colors.surfaceVariant
+                else -> colors.primary
             }
         )
     ) {
         Column(
-            modifier = Modifier.padding(24.dp),
+            modifier = Modifier.padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -272,11 +278,11 @@ fun WSPRStationHeader(uiState: MainUiState, colors: WSPRColors)
                 Icon(
                     imageVector = Icons.Default.Call, // FIXME: Radio icon?
                     contentDescription = "WSPR Station",
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(40.dp),
                     tint = Color.White
                 )
 
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(12.dp))
 
                 Text(
                     text = "WSPR Station Demo",
@@ -286,22 +292,24 @@ fun WSPRStationHeader(uiState: MainUiState, colors: WSPRColors)
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Text(
                 text = "WSPR receive and transmit system",
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = Color.White.copy(alpha = 0.9f)
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Text(
                 text = uiState.systemStatusSummary,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
-                color = Color.White.copy(alpha = 0.8f)
+                color = Color.White.copy(alpha = 0.8f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -316,7 +324,8 @@ fun SystemStatusDashboard(uiState: MainUiState, colors: WSPRColors)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
+    )
+    {
         // USB Audio Status
         StatusCard(
             title = "USB Audio",
@@ -988,10 +997,12 @@ fun SerialRadioTransmitSection(
     onConnectToSerialDevice: (UsbSerialDriver) -> Unit,
     onDisconnectSerial: () -> Unit,
     onEncodeWSPR: (String, String, Int) -> Unit,
-    onShareLastFile: () -> Unit
-) {
-    var callsign by remember { mutableStateOf("K1ABC") }
-    var gridSquare by remember { mutableStateOf("FN31pr") }
+    onShareLastFile: () -> Unit,
+    onRunCommandSequenceTest: () -> Unit = {}
+)
+{
+    var callsign by remember { mutableStateOf("11N1FK") }
+    var gridSquare by remember { mutableStateOf("FN31") }
     var power by remember { mutableStateOf("30") }
 
     val validWSPRPowers = listOf(0, 3, 7, 10, 13, 17, 20, 23, 27, 30, 33, 37, 40, 43, 47, 50, 53, 57, 60)
@@ -999,7 +1010,8 @@ fun SerialRadioTransmitSection(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = colors.surface)
-    ) {
+    )
+    {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1026,14 +1038,18 @@ fun SerialRadioTransmitSection(
             }
 
             // Serial device connection
-            if (uiState.connectedSerialDevice == null) {
-                if (uiState.availableSerialDevices.isEmpty()) {
+            if (uiState.connectedSerialDevice == null)
+            {
+                if (uiState.availableSerialDevices.isEmpty())
+                {
                     Text(
                         text = "No serial devices found. Connect your custom WSPR radio via USB.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurfaceVariant
                     )
-                } else {
+                }
+                else
+                {
                     Text(
                         text = "Available serial devices:",
                         style = MaterialTheme.typography.bodyMedium
@@ -1074,17 +1090,21 @@ fun SerialRadioTransmitSection(
                         }
                     }
                 }
-            } else {
+            }
+            else
+            {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
                         containerColor = colors.success.copy(alpha = 0.2f)
                     )
-                ) {
+                )
+                {
                     Row(
                         modifier = Modifier.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    )
+                    {
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
                             contentDescription = "Connected",
@@ -1102,126 +1122,163 @@ fun SerialRadioTransmitSection(
                     }
                 }
 
-                // WSPR generation controls (always available)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "WSPR Signal Generation:",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Medium
-                )
-
-                Text(
-                    text = if (uiState.connectedSerialDevice != null) {
-                        "Generate WSPR signal and transmit via connected radio"
-                    } else {
-                        "Generate WSPR signal and save to file for sharing"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant
-                )
-
-                // Input fields
+                // Add debug test button when connected
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = callsign,
-                        onValueChange = { callsign = it.uppercase() },
-                        label = { Text("Callsign") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-
-                    OutlinedTextField(
-                        value = gridSquare,
-                        onValueChange = { gridSquare = it.uppercase() },
-                        label = { Text("Grid Square") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                }
-
-                // Power selection and buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.Bottom
-                ) {
-                    OutlinedTextField(
-                        value = power,
-                        onValueChange = { /* Handle dropdown only */ },
-                        label = { Text("Power (dBm)") },
-                        modifier = Modifier.weight(1f),
-                        readOnly = true,
-                        trailingIcon = {
-                            DropdownMenu(
-                                expanded = false,
-                                onDismissRequest = { }
-                            ) {
-                                validWSPRPowers.forEach { powerValue ->
-                                    DropdownMenuItem(
-                                        text = { Text("$powerValue") },
-                                        onClick = { power = powerValue.toString() }
-                                    )
-                                }
-                            }
-                        }
-                    )
-
+                )
+                {
                     Button(
-                        onClick = {
-                            val powerInt = power.toIntOrNull() ?: 30
-                            onEncodeWSPR(callsign, gridSquare, powerInt)
-                        },
-                        enabled = !uiState.isTransmitting && callsign.isNotBlank() && gridSquare.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+                        onClick = { onRunCommandSequenceTest() },
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.warning),
                         modifier = Modifier.weight(1f)
-                    ) {
-                        if (uiState.isTransmitting) {
-                            Text("Processing...", color = Color.White)
-                        } else if (uiState.connectedSerialDevice != null) {
-                            Text("Generate & Transmit", color = Color.White)
-                        } else {
-                            Text("Generate WAV File", color = Color.White)
-                        }
-                    }
-                }
-
-                // Share button (when file available)
-                if (uiState.hasFileToShare) {
-                    Button(
-                        onClick = onShareLastFile,
-                        colors = ButtonDefaults.buttonColors(containerColor = colors.secondary),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
+                    )
+                    {
                         Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Share",
-                            tint = Color.White
+                            imageVector = Icons.Default.Build, // or Icons.Default.Science
+                            contentDescription = "Test",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Share Generated File", color = Color.White)
+                        Text("Run Command Test", color = Color.White)
                     }
                 }
+
+//                // WSPR generation controls (always available)
+//                Spacer(modifier = Modifier.height(8.dp))
+//
+//                Text(
+//                    text = "WSPR Signal Generation:",
+//                    style = MaterialTheme.typography.labelLarge,
+//                    fontWeight = FontWeight.Medium
+//                )
+//
+//                Text(
+//                    text = if (uiState.connectedSerialDevice != null) {
+//                        "Generate WSPR signal and transmit via connected radio"
+//                    } else {
+//                        "Generate WSPR signal and save to file for sharing"
+//                    },
+//                    style = MaterialTheme.typography.bodySmall,
+//                    color = colors.onSurfaceVariant
+//                )
+
+//                // Input fields
+//                Row(
+//                    modifier = Modifier.fillMaxWidth(),
+//                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+//                )
+//                {
+//                    OutlinedTextField(
+//                        value = callsign,
+//                        onValueChange = { callsign = it.uppercase() },
+//                        label = { Text("Callsign") },
+//                        modifier = Modifier.weight(1f),
+//                        singleLine = true
+//                    )
+//
+//                    OutlinedTextField(
+//                        value = gridSquare,
+//                        onValueChange = { gridSquare = it.uppercase() },
+//                        label = { Text("Grid Square") },
+//                        modifier = Modifier.weight(1f),
+//                        singleLine = true
+//                    )
+//                }
+
+//                // Power selection and buttons
+//                Row(
+//                    modifier = Modifier.fillMaxWidth(),
+//                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+//                    verticalAlignment = Alignment.Bottom
+//                )
+//                {
+//                    OutlinedTextField(
+//                        value = power,
+//                        onValueChange = { /* Handle dropdown only */ },
+//                        label = { Text("Power (dBm)") },
+//                        modifier = Modifier.weight(1f),
+//                        readOnly = true,
+//                        trailingIcon = {
+//                            DropdownMenu(
+//                                expanded = false,
+//                                onDismissRequest = { }
+//                            ) {
+//                                validWSPRPowers.forEach { powerValue ->
+//                                    DropdownMenuItem(
+//                                        text = { Text("$powerValue") },
+//                                        onClick = { power = powerValue.toString() }
+//                                    )
+//                                }
+//                            }
+//                        }
+//                    )
+//
+//                    Button(
+//                        onClick = {
+//                            val powerInt = power.toIntOrNull() ?: 30
+//                            onEncodeWSPR(callsign, gridSquare, powerInt)
+//                        },
+//                        enabled = !uiState.isTransmitting && callsign.isNotBlank() && gridSquare.isNotBlank(),
+//                        colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+//                        modifier = Modifier.weight(1f)
+//                    ) {
+//                        if (uiState.isTransmitting)
+//                        {
+//                            Text("Processing...", color = Color.White)
+//                        }
+//                        else if (uiState.connectedSerialDevice != null)
+//                        {
+//                            Text("Generate & Transmit", color = Color.White)
+//                        }
+//                        else
+//                        {
+//                            Text("Generate WAV File", color = Color.White)
+//                        }
+//                    }
+//                }
+//
+//                // Share button (when file available)
+//                if (uiState.hasFileToShare)
+//                {
+//                    Button(
+//                        onClick = onShareLastFile,
+//                        colors = ButtonDefaults.buttonColors(containerColor = colors.secondary),
+//                        modifier = Modifier.fillMaxWidth()
+//                    )
+//                    {
+//                        Icon(
+//                            imageVector = Icons.Default.Share,
+//                            contentDescription = "Share",
+//                            tint = Color.White
+//                        )
+//                        Spacer(modifier = Modifier.width(8.dp))
+//                        Text("Share Generated File", color = Color.White)
+//                    }
+//                }
 
                 // Status message
                 if (uiState.statusMessage != null || uiState.errorMessage != null) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (uiState.errorMessage != null) {
+                            containerColor = if (uiState.errorMessage != null)
+                            {
                                 colors.error.copy(alpha = 0.2f)
-                            } else {
+                            }
+                            else
+                            {
                                 colors.surfaceVariant
                             }
                         )
-                    ) {
+                    )
+                    {
                         Row(
                             modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        )
+                        {
                             Icon(
                                 imageVector = if (uiState.errorMessage != null) Icons.Default.Warning else Icons.Default.Info,
                                 contentDescription = null,
@@ -1248,7 +1305,8 @@ fun SerialRadioTransmitSection(
 fun TransmissionHistoryCard(
     transmissionHistory: List<TransmissionRecord>,
     colors: WSPRColors
-) {
+)
+{
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = colors.surface)
@@ -1323,7 +1381,8 @@ fun TransmissionHistoryCard(
 fun DiagnosticsCard(
     onGetDiagnostics: () -> String,
     colors: WSPRColors
-) {
+)
+{
     var showDiagnostics by remember { mutableStateOf(false) }
     var diagnosticsText by remember { mutableStateOf("") }
 

@@ -53,7 +53,8 @@ data class MainUiState(
     // ========== Status Messages ==========
     val statusMessage: String? = null,
     val errorMessage: String? = null
-){
+)
+{
     /** True if there are any error conditions that need user attention */
     val hasErrors: Boolean
         get() = errorMessage != null || stationState is WSPRStationState.Error
