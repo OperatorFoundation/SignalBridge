@@ -335,6 +335,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
      * Starts discovery of serial devices for custom radio connection.
      * Continuously monitors for device connection/disconnection.
      */
+
+    private fun startSerialReadLoop() {
+        viewModelScope.launch(Dispatchers.IO) {
+            Timber.d("Starting serial read loop")
+            while (currentSerialConnection != null) {
+                try {
+                    val data = currentSerialConnection?.readAvailable()
+                    if (data != null && data.isNotEmpty()) {
+                        val message = data.decodeToString().trim()
+                        Timber.d("Arduino response: $message")
+
+                        // Update UI or process response
+                        withContext(Dispatchers.Main) {
+                            // Add to transmission history or update status
+                            updateStatusMessage("Arduino: $message")
+                        }
+                    }
+                    delay(50) // Check every 50ms
+                } catch (e: Exception) {
+                    Timber.e(e, "Serial read loop error")
+                    break
+                }
+            }
+            Timber.d("Serial read loop ended")
+        }
+    }
+
     private fun startSerialDeviceDiscovery()
     {
         viewModelScope.launch {
@@ -384,6 +411,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                     {
                         is SerialConnectionFactory.ConnectionState.Connected -> {
                             currentSerialConnection = state.connection
+
+                            // START THE READ LOOP
+                            startSerialReadLoop()
 
                             _uiState.update {
                                 it.copy(
