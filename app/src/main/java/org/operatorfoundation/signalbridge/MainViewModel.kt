@@ -4,7 +4,6 @@ import android.app.Application
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.lifecycleScope
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -336,10 +335,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
      * Continuously monitors for device connection/disconnection.
      */
 
-    private fun startSerialReadLoop() {
+    private fun startSerialReadLoop()
+    {
         viewModelScope.launch(Dispatchers.IO) {
             Timber.d("Starting serial read loop")
-            while (currentSerialConnection != null) {
+            while (currentSerialConnection != null)
+            {
                 try {
                     val data = currentSerialConnection?.readAvailable()
                     if (data != null && data.isNotEmpty()) {
@@ -406,14 +407,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
             {
                 updateStatusMessage("Connecting to custom radio...")
 
+                var connectionEstablished = false
+
                 serialConnectionFactory.createConnection(driver.device).collect { state ->
                     when (state)
                     {
                         is SerialConnectionFactory.ConnectionState.Connected -> {
                             currentSerialConnection = state.connection
-
-                            // START THE READ LOOP
-                            startSerialReadLoop()
 
                             _uiState.update {
                                 it.copy(
@@ -424,7 +424,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
 
                             updateStatusMessage("Connected to custom radio: ${driver.device.deviceName}")
                             Timber.i("Successfully connected to serial device: ${driver.device.deviceName}")
+
+                            // Start read loop once connection is established
+                            if (!connectionEstablished) {
+                                connectionEstablished = true
+                                startSerialReadLoop()
+                            }
                         }
+
 
                         is SerialConnectionFactory.ConnectionState.Error -> {
                             val errorMessage = "Serial connection failed: ${state.message}"
