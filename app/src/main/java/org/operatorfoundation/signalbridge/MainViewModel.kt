@@ -18,6 +18,7 @@ import org.operatorfoundation.signalbridge.models.AudioBufferConfiguration
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import org.operatorfoundation.transmission.SerialConnection
 import org.operatorfoundation.transmission.SerialConnectionFactory
+import org.operatorfoundation.transmission.SerialReader
 import timber.log.Timber
 import java.io.File
 
@@ -330,39 +331,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // ========== Serial Device Management (TransmissionAndroid) ==========
+
+    private var serialReader: SerialReader? = null
+
     /**
      * Starts discovery of serial devices for custom radio connection.
      * Continuously monitors for device connection/disconnection.
      */
-
-    private fun startSerialReadLoop()
-    {
-        viewModelScope.launch(Dispatchers.IO) {
-            Timber.d("Starting serial read loop")
-            while (currentSerialConnection != null)
-            {
-                try {
-                    val data = currentSerialConnection?.readAvailable()
-                    if (data != null && data.isNotEmpty()) {
-                        val message = data.decodeToString().trim()
-                        Timber.d("Arduino response: $message")
-
-                        // Update UI or process response
-                        withContext(Dispatchers.Main) {
-                            // Add to transmission history or update status
-                            updateStatusMessage("Arduino: $message")
-                        }
-                    }
-                    delay(50) // Check every 50ms
-                } catch (e: Exception) {
-                    Timber.e(e, "Serial read loop error")
-                    break
-                }
-            }
-            Timber.d("Serial read loop ended")
-        }
-    }
-
     private fun startSerialDeviceDiscovery()
     {
         viewModelScope.launch {
@@ -413,25 +388,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                     when (state)
                     {
                         is SerialConnectionFactory.ConnectionState.Connected -> {
-                            currentSerialConnection = state.connection
-
-                            _uiState.update {
-                                it.copy(
-                                    connectedSerialDevice = driver,
-                                    serialConnectionState = state
-                                )
-                            }
-
-                            updateStatusMessage("Connected to custom radio: ${driver.device.deviceName}")
-                            Timber.i("Successfully connected to serial device: ${driver.device.deviceName}")
-
-                            // Start read loop once connection is established
-                            if (!connectionEstablished) {
+                            if (!connectionEstablished)
+                            {
                                 connectionEstablished = true
-                                startSerialReadLoop()
+                                currentSerialConnection = state.connection
+                                serialReader = SerialReader(state.connection)
+
+                                _uiState.update {
+                                    it.copy(
+                                        connectedSerialDevice = driver,
+                                        serialConnectionState = state
+                                    )
+                                }
+
+                                updateStatusMessage("Connected to custom radio: ${driver.device.deviceName}")
+                                Timber.i("Successfully connected to serial device: ${driver.device.deviceName}")
+
+                                // Start continuous reading using SerialReader
+                                startSerialReading()
                             }
                         }
-
 
                         is SerialConnectionFactory.ConnectionState.Error -> {
                             val errorMessage = "Serial connection failed: ${state.message}"
@@ -460,6 +436,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Starts continuous serial reading using SerialReader.
+     * Displays received messages in status updates.
+     */
+    private fun startSerialReading()
+    {
+        val reader = serialReader ?: return
+
+        reader.startLineReading(
+            scope = viewModelScope,
+            timeoutMs = 500,
+            maxLength = 1024,
+            onLine = { line ->
+                val message = "Device: $line"
+                Timber.d(message)
+                updateStatusMessage(message)
+            },
+            onError = { error ->
+                Timber.w("Serial read error: ${error.message}")
+            }
+        )
+    }
+
+    /**
+     * Stops serial reading.
+     */
+    private fun stopSerialReading()
+    {
+        serialReader?.stopReading(viewModelScope)
+    }
+
+    /**
      * Disconnects from the current serial device.
      */
     fun disconnectSerial()
@@ -467,8 +474,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try
             {
-                currentSerialConnection?.close()
+                updateStatusMessage("Disconnecting from the serial device...")
+
+                // Stop reading
+                stopSerialReading()
+                delay(200)
+
+                // Close connection
+                withContext(Dispatchers.IO) {
+                    currentSerialConnection?. close()
+                }
+
                 currentSerialConnection = null
+                serialReader = null
                 serialConnectionFactory.disconnect()
 
                 _uiState.update {
@@ -480,7 +498,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
 
-                updateStatusMessage("Disconnected from custom radio")
+                updateStatusMessage("Disconnected from serial device")
                 Timber.i("Disconnected from serial device")
             }
             catch (exception: Exception)
@@ -947,10 +965,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
             {
                 val connection = currentSerialConnection
                 if (connection == null) {
-                    Timber.w("No active connection for command sequence test")
+                    Timber.w("No active serial connection available for the command sequence test")
                     return@launch
                 }
 
+                // Stop continuous reading to avoid conflicts
+                stopSerialReading()
+                delay(200)
+
+                updateStatusMessage("=== Starting Command Sequence Test ===")
                 Timber.i("=== Starting Command Sequence Test ===")
 
                 // Predefined command sequence
@@ -968,7 +991,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                     "q",
                     "q",
                     "3",
-                    "1"
+                    "1",
+                    "q"
                 )
 
                 var sequenceSuccess = true
@@ -980,11 +1004,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
 
                         // Send the command
                         val sendSuccess = withContext(Dispatchers.IO) {
-                            connection.write(command)
+                            connection.write(command + "\r\n")
                         }
 
                         if (!sendSuccess) {
-                            Timber.e("Failed to send command: $command")
+                            val errorMessage = "Failed to send command: $command"
+                            Timber.e(errorMessage)
+                            updateErrorMessage(errorMessage)
                             sequenceSuccess = false
                             break
                         }
@@ -992,7 +1018,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                         Timber.d("→ Sent: $command")
 
                         // Wait for response with timeout
-                        val response = waitForResponse(connection, timeoutMs = 2000)
+                        val response = waitForAnyResponse(connection, timeoutMs = 2000)
 
                         if (response != null) {
                             Timber.d("← Response: $response")
@@ -1004,101 +1030,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                         // Brief pause between commands
                         delay(500) // 500ms delay between commands
 
-                    } catch (e: Exception) {
+                    }
+                    catch (e: Exception)
+                    {
                         Timber.e(e, "Error during command sequence at step ${index + 1}: $command")
+                        updateErrorMessage("Command sequence error: ${e.message}")
                         sequenceSuccess = false
                         break
                     }
                 }
 
-                // Send final 'q' command after all responses received
-                if (sequenceSuccess) {
-                    Timber.i("Sequence complete, sending final 'q' command...")
-
-                    try {
-                        val finalSendSuccess = withContext(Dispatchers.IO) {
-                            connection.write("q")
-                        }
-
-                        if (finalSendSuccess) {
-                            Timber.d("→ Final command sent: q")
-
-                            val finalResponse = waitForResponse(connection, timeoutMs = 2000)
-                            if (finalResponse != null) {
-                                Timber.d("← Final response: $finalResponse")
-                            }
-
-                            Timber.i("=== Command Sequence Test COMPLETED ===")
-                        } else {
-                            Timber.e("Failed to send final 'q' command")
-                        }
-
-                    } catch (e: Exception) {
-                        Timber.e(e, "Error sending final command")
-                    }
-                } else {
+                if (sequenceSuccess)
+                {
+                    updateStatusMessage("Command sequence completed successfully")
+                    Timber.i("=== Command Sequence Test COMPLETED ===")
+                }
+                else
+                {
+                    updateErrorMessage("Command sequence test failed")
                     Timber.e("=== Command Sequence Test FAILED ===")
                 }
 
-            } catch (e: Exception) {
-                Timber.e(e, "Fatal error during command sequence test")
+                // Restart continuous reading
+                delay(500)
+                startSerialReading()
+
             }
-        }
-    }
+            catch (e: Exception)
+            {
+                Timber.e(e, "Fatal error during command sequence test")
+                updateErrorMessage("Command sequence test error: ${e.message}")
 
-    /**
-     * Waits for a response from the serial connection with a specified timeout.
-     *
-     * @param connection The serial connection to read from
-     * @param timeoutMs Timeout in milliseconds
-     * @return The received response string, or null if timeout/error
-     */
-    private suspend fun waitForResponse(connection: SerialConnection, timeoutMs: Long): String? {
-        return withContext(Dispatchers.IO) {
-            withTimeoutOrNull(timeoutMs) {
-                val buffer = StringBuilder()
-                val startTime = System.currentTimeMillis()
-
-                while (System.currentTimeMillis() - startTime < timeoutMs) {
-                    try {
-                        val data = connection.readAvailable()
-
-                        if (data != null && data.isNotEmpty()) {
-                            for (byte in data) {
-                                val char = byte.toInt().toChar()
-
-                                when {
-                                    char == '\n' || char == '\r' -> {
-                                        if (buffer.isNotEmpty()) {
-                                            return@withTimeoutOrNull buffer.toString().trim()
-                                        }
-                                    }
-                                    char.isISOControl().not() && char != '\u0000' -> {
-                                        buffer.append(char)
-                                    }
-                                }
-                            }
-
-                            // If we got some data but no line ending yet, continue reading
-                            if (buffer.isNotEmpty()) {
-                                delay(10) // Small delay before checking for more data
-                            }
-                        } else {
-                            delay(50) // No data available, wait a bit
-                        }
-
-                    } catch (e: Exception) {
-                        Timber.w("Error while waiting for response: ${e.message}")
-                        delay(100)
-                    }
-                }
-
-                // Timeout - return partial data if any
-                if (buffer.isNotEmpty()) {
-                    buffer.toString().trim()
-                } else {
-                    null
-                }
+                // Try to restart reading
+                startSerialReading()
             }
         }
     }

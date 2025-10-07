@@ -10,8 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "org.operatorfoundation.signalbridge"
-        minSdk = 26
-        targetSdk = 35
+        minSdk = 33
         versionCode = 1
         versionName = "1.0"
 
@@ -43,7 +42,7 @@ dependencies {
     implementation(project(":SignalBridge"))
 
     implementation("com.github.OperatorFoundation:AudioCoderAndroid:main") // Radio codec (WSPR) Library
-    implementation("com.github.OperatorFoundation:TransmissionAndroid:main-SNAPSHOT") // Serial communications
+    implementation("com.github.OperatorFoundation:TransmissionAndroid:919f0656df") // Serial communications
     implementation("com.github.OperatorFoundation:ion-android:main") // Communication protocol
 
     // 3rd party libraries
