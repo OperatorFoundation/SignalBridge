@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "org.operatorfoundation.signalbridge"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 33
@@ -84,7 +84,7 @@ afterEvaluate {
 }
 
 dependencies {
-    implementation("com.github.OperatorFoundation:AudioCoderAndroid:main")
+    implementation("com.github.OperatorFoundation:AudioCoderAndroid:2fe9da73f9")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)

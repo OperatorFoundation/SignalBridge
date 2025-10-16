@@ -953,6 +953,104 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
 
 
     // MARK: Test functions
+    /**
+     * Test function that encodes a WSPR message to frequencies and transmits them via serial.
+     * This demonstrates the WSPR frequency encoding and transmission workflow.
+     */
+    fun testWSPRFrequencyTransmission()
+    {
+        viewModelScope.launch {
+            try
+            {
+                val connection = currentSerialConnection
+                if (connection == null)
+                {
+                    updateErrorMessage("No active serial connection for WSPR frequency test")
+                    return@launch
+                }
+
+                // Stop continuous reading to avoid conflicts
+                stopSerialReading()
+                delay(200)
+
+                updateStatusMessage("=== Starting WSPR Frequency Transmission Test ===")
+                Timber.i("=== Starting WSPR Frequency Transmission Test ===")
+
+                // Test parameters - standard WSPR message
+                val testCallsign = "Q000"
+                val testGridSquare = "FN31"
+                val testPower = 30 // 30 dBm = 1 watt
+
+                updateStatusMessage("Encoding WSPR: $testCallsign $testGridSquare ${testPower}dBm")
+
+                // Generate frequency array using AudioCoder
+                val frequencyArray: LongArray = withContext(Dispatchers.IO) {
+                    CJarInterface.WSPREncodeToFrequencies(
+                        testCallsign,
+                        testGridSquare,
+                        testPower,
+                        0, // No frequency offset
+                        false // USB mode (not LSB)
+                    )
+                }
+
+                if (frequencyArray.isEmpty())
+                {
+                    updateErrorMessage("Failed to encode frequencies")
+                    startSerialReading()
+                    return@launch
+                }
+
+                Timber.i("Encoded ${frequencyArray.size} frequencies")
+                Timber.i("First 5: ${frequencyArray.take(5).joinToString(", ")}")
+
+                // Convert to comma-separated string
+                val frequencyString = frequencyArray.joinToString(",") + "\n"
+
+                updateStatusMessage("Sending ${frequencyArray.size} frequencies...")
+
+                // Send the array
+                val sent = withContext(Dispatchers.IO) {
+                    connection.write(frequencyString)
+                }
+
+                if (!sent)
+                {
+                    updateErrorMessage("Failed to send frequency data")
+                    startSerialReading()
+                    return@launch
+                }
+
+                Timber.i("Frequency data sent (${frequencyString.length} bytes)")
+                updateStatusMessage("Data sent, listening for response...")
+
+                // Wait and display any response
+                delay(1000)
+                val response = waitForAnyResponse(connection, timeoutMs = 3000)
+
+                if (response != null)
+                {
+                    Timber.i("Response: $response")
+                    updateStatusMessage("Response: $response")
+                }
+                else
+                {
+                    Timber.i("No response received")
+                    updateStatusMessage("No response received")
+                }
+
+                delay(500)
+                startSerialReading()
+            }
+            catch (error: Exception)
+            {
+                Timber.e(error, "WSPR frequency test error")
+                updateErrorMessage("Test error: ${error.message}")
+                startSerialReading()
+            }
+        }
+    }
+
 
     /**
      * Test function that sends a predetermined sequence of commands to the microcontroller.

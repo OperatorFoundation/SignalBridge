@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "org.operatorfoundation.signalbridge"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "org.operatorfoundation.signalbridge"
@@ -41,9 +41,10 @@ android {
 dependencies {
     implementation(project(":SignalBridge"))
 
-    implementation("com.github.OperatorFoundation:AudioCoderAndroid:main") // Radio codec (WSPR) Library
-    implementation("com.github.OperatorFoundation:TransmissionAndroid:919f0656df") // Serial communications
+    implementation("com.github.OperatorFoundation:AudioCoderAndroid:2fe9da73f9") // Radio codec (WSPR) Library
+    implementation("com.github.OperatorFoundation:TransmissionAndroid:223210eb13") // Serial communications
     implementation("com.github.OperatorFoundation:ion-android:main") // Communication protocol
+    implementation("com.github.OperatorFoundation:CodexKotlin:main-SNAPSHOT") // Message Encoding
 
     // 3rd party libraries
     implementation(libs.usb.serial.android)

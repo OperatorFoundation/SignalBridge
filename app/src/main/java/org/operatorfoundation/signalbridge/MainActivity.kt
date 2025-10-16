@@ -129,7 +129,7 @@ fun WSPRStationDemoApp(viewModel: MainViewModel)
                 onTriggerManualDecode = { viewModel.triggerManualDecode() },
                 // Diagnostics
                 onGetDiagnostics = { viewModel.getDiagnosticInformation() },
-                onRunCommandSequenceTest = { viewModel.runCommandSequenceTest() }
+                onRunCommandSequenceTest = { viewModel.testWSPRFrequencyTransmission() }
             )
         }
     }
@@ -1141,7 +1141,7 @@ fun SerialRadioTransmitSection(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Run Command Test", color = Color.White)
+                        Text("Test WSPR Transmission", color = Color.White)
                     }
                 }
 
