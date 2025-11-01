@@ -14,6 +14,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.operatorfoundation.audiocoder.*
 import org.operatorfoundation.audiocoder.models.WSPRStationConfiguration
 import org.operatorfoundation.audiocoder.models.WSPRStationState
+import org.operatorfoundation.iota.nouns.IotaList
+import org.operatorfoundation.iota.nouns.Noun
 import org.operatorfoundation.signalbridge.models.AudioBufferConfiguration
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import org.operatorfoundation.transmission.SerialConnection
@@ -962,7 +964,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try
             {
-                val connection = currentSerialConnection
+                val connection: SerialConnection? = currentSerialConnection
                 if (connection == null)
                 {
                     updateErrorMessage("No active serial connection for WSPR frequency test")
@@ -1001,17 +1003,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                Timber.i("Encoded ${frequencyArray.size} frequencies")
-                Timber.i("First 5: ${frequencyArray.take(5).joinToString(", ")}")
+                // Convert to List<ULong> for IotaList
+                val freqList: List<ULong> = frequencyArray.map { it.toULong() }
 
-                // Convert to comma-separated string
-                val frequencyString = frequencyArray.joinToString(",") + "\n"
+                Timber.i("Encoded ${freqList.size} frequencies")
+                Timber.i("Range: ${freqList.first()} to ${freqList.last()}")
 
-                updateStatusMessage("Sending ${frequencyArray.size} frequencies...")
+                updateStatusMessage("Sending ${freqList.size} frequencies via IotaList...")
 
-                // Send the array
+                // Serialize and send using IotaList
                 val sent = withContext(Dispatchers.IO) {
-                    connection.write(frequencyString)
+                    try {
+                        val iotaList = IotaList.makeULongs(freqList)
+                        Noun.to_conn(connection, iotaList)
+                        true
+                    } catch (e: Exception) {
+                        Timber.e(e, "IotaList serialization failed")
+                        false
+                    }
                 }
 
                 if (!sent)
@@ -1021,8 +1030,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                Timber.i("Frequency data sent (${frequencyString.length} bytes)")
-                updateStatusMessage("Data sent, listening for response...")
+                Timber.i("Data sent, waiting for response...")
+                updateStatusMessage("Listening for response...")
 
                 // Wait and display any response
                 delay(1000)
