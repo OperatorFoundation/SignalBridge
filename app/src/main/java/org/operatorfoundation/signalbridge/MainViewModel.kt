@@ -14,8 +14,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.operatorfoundation.audiocoder.*
 import org.operatorfoundation.audiocoder.models.WSPRStationConfiguration
 import org.operatorfoundation.audiocoder.models.WSPRStationState
-import org.operatorfoundation.iota.nouns.IotaList
+import org.operatorfoundation.audiocoder.WSPREncoder
+import org.operatorfoundation.iota.IotaObject
 import org.operatorfoundation.iota.nouns.Noun
+import org.operatorfoundation.iota.toIotaValue
 import org.operatorfoundation.signalbridge.models.AudioBufferConfiguration
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import org.operatorfoundation.transmission.SerialConnection
@@ -986,15 +988,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                 updateStatusMessage("Encoding WSPR: $testCallsign $testGridSquare ${testPower}dBm")
 
                 // Generate frequency array using AudioCoder
-                val frequencyArray: LongArray = withContext(Dispatchers.IO) {
-                    CJarInterface.WSPREncodeToFrequencies(
+                val frequencyArray: LongArray = WSPREncoder.encodeToFrequencies(
+                    WSPREncoder.WSPRMessage(
                         testCallsign,
                         testGridSquare,
                         testPower,
                         0, // No frequency offset
                         false // USB mode (not LSB)
                     )
-                }
+                )
 
                 if (frequencyArray.isEmpty())
                 {
@@ -1003,18 +1005,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Convert to List<ULong> for IotaList
-                val freqList: List<ULong> = frequencyArray.map { it.toULong() }
+                // Create data structure to instruct radio what to do
+                val delayTime = 0 // FIXME - put the actual delay time
+                val messages = listOf(frequencyArray.toList()) // FIXME - replace with real list of lists rather than making a literal list of one item
+                val payload = listOf(delayTime, messages)
+                val iotaList = IotaObject.fromKotlin(payload.toIotaValue())
 
-                Timber.i("Encoded ${freqList.size} frequencies")
-                Timber.i("Range: ${freqList.first()} to ${freqList.last()}")
-
-                updateStatusMessage("Sending ${freqList.size} frequencies via IotaList...")
+                updateStatusMessage("Sending ${messages.size} WSPR message(s) via IotaList...")
 
                 // Serialize and send using IotaList
                 val sent = withContext(Dispatchers.IO) {
                     try {
-                        val iotaList = IotaList.makeULongs(freqList)
                         Noun.to_conn(connection, iotaList)
                         true
                     } catch (e: Exception) {
