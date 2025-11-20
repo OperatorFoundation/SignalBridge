@@ -43,7 +43,7 @@ dependencies {
 
     implementation("com.github.OperatorFoundation:AudioCoderAndroid:v0.0.2") // Radio codec (WSPR) Library
     implementation("com.github.OperatorFoundation:TransmissionAndroid:v1.3.5") // Serial communications
-    implementation("com.github.OperatorFoundation:ion-android:1.0.7") // Communication protocol
+    implementation("com.github.OperatorFoundation:ion-android:1.0.8") // Communication protocol
     implementation("com.github.OperatorFoundation:iota-android:1.0.7")
     implementation("com.github.OperatorFoundation:CodexKotlin:0.0.1") // Message Encoding
 
