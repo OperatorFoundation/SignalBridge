@@ -89,7 +89,7 @@ internal class UsbPermissionManager(private val context: Context, private val us
                     if (intent.action == ACTION_USB_PERMISSION)
                     {
                         val responseDevice = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                        val permissionGranted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                        val permissionGranted = responseDevice?.let { usbManager.hasPermission(it) } ?: false
 
                         Timber.d("Permission response received for ${responseDevice?.productName}: granted? $permissionGranted")
 
