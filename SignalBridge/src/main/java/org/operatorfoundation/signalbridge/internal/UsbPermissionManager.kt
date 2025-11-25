@@ -89,12 +89,11 @@ internal class UsbPermissionManager(private val context: Context, private val us
                     if (intent.action == ACTION_USB_PERMISSION)
                     {
                         val responseDevice = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                        val permissionGranted = responseDevice?.let { usbManager.hasPermission(it) } ?: false
-
-                        Timber.d("Permission response received for ${responseDevice?.productName}: granted? $permissionGranted")
+                        val permissionGranted = usbManager.hasPermission(device)
+                        Timber.d("Permission response for ${device.productName}: granted? $permissionGranted (responseDevice was ${if (responseDevice == null) "null" else "valid"})")
 
                         // Verify that this is for the correct device
-                        if (responseDevice?.deviceId == device.deviceId)
+                        if (responseDevice?.deviceId == device.deviceId || responseDevice == null)
                         {
                             // Unregister the receiver
                             try
