@@ -240,7 +240,7 @@ internal class AudioRecordManager(private val context: Context, private val usbD
 
             val audioDeviceInfo = availableDevices.find { device ->
                 device.type == android.media.AudioDeviceInfo.TYPE_USB_DEVICE &&
-                        device.productName?.toString() == usbDevice?.productName
+                        device.productName?.toString()?.contains(usbDevice?.productName ?: "", ignoreCase = true) == true
             }
 
             if (audioDeviceInfo != null)
