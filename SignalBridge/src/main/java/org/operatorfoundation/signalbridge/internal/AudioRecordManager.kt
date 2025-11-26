@@ -4,13 +4,9 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
-import android.hardware.usb.UsbDevice
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -36,7 +32,7 @@ import org.operatorfoundation.signalbridge.exceptions.AudioRecordException
  * - State management beyond AudioRecord
  * - Audio output/playback
  */
-internal class AudioRecordManager(private val context: Context, private val usbDevice: UsbDevice? = null)
+internal class AudioRecordManager(private val context: Context)
 {
     companion object
     {
@@ -60,8 +56,6 @@ internal class AudioRecordManager(private val context: Context, private val usbD
     private var workingAudioSource: Int = -1
     private var bufferSize: Int = 0
     private var detectedSampleRate: Int = SAMPLE_RATE // Will be updated during initialization
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-
 
     /**
      * Tests multiple audio sources and initializes AudioRecord with the first working one.
@@ -70,14 +64,6 @@ internal class AudioRecordManager(private val context: Context, private val usbD
     suspend fun initialize(candidateSampleRates: List<Int> = listOf(48000, 44100, 32000, 12000)): AudioRecordInitResult
     {
         Timber.d("Initializing AudioRecord")
-
-        // Set USB audio routing if we have a USB device
-        if (usbDevice != null)
-        {
-            val routingSet = setUsbAudioRouting()
-            if (routingSet) Timber.i("USB audio routing configured successfully")
-            else Timber.w("Failed to set USB audio routing, continuing with default routing")
-        }
 
         // Test each audio source until we find one that works
         for (audioSource in AUDIO_SOURCES_TO_TEST)
@@ -166,7 +152,7 @@ internal class AudioRecordManager(private val context: Context, private val usbD
             // Use optimal buffer size
             val calculatedBufferSize = calculateOptimalBufferSize(minBufferSize)
 
-            // Create AudioRecord instance - this call requires RECORD_AUDIO permission
+            // Create AudioRecord instance - simple, no routing
             val testAudioRecord = try {
                 AudioRecord(
                     audioSource,
@@ -190,12 +176,12 @@ internal class AudioRecordManager(private val context: Context, private val usbD
             {
                 // Success - store the AudioRecord and buffer size
                 audioRecord = testAudioRecord
-                bufferSize = calculatedBufferSize  // Store for later use in startRecording()
+                bufferSize = calculatedBufferSize
 
                 val recordInfo = AudioRecordInfo(
                     state = testAudioRecord.state,
                     audioSource = audioSource,
-                    sampleRate = sampleRate, // This is now the actual working rate
+                    sampleRate = sampleRate,
                     channelConfig = CHANNEL_CONFIG,
                     audioFormat = AUDIO_FORMAT,
                     bufferSize = calculatedBufferSize,
@@ -225,41 +211,6 @@ internal class AudioRecordManager(private val context: Context, private val usbD
                 errorMessage = "Exception at ${sampleRate}Hz: ${exception.message}",
                 cause = exception
             )
-        }
-    }
-
-    /**
-     * Sets USB audio device as the preferred audio input routing
-     */
-    private fun setUsbAudioRouting(): Boolean
-    {
-        return try
-        {
-            // Get the list of available communication devices
-            val availableDevices = audioManager.availableCommunicationDevices
-
-            val audioDeviceInfo = availableDevices.find { device ->
-                device.type == android.media.AudioDeviceInfo.TYPE_USB_DEVICE &&
-                        device.productName?.toString()?.contains(usbDevice?.productName ?: "", ignoreCase = true) == true
-            }
-
-            if (audioDeviceInfo != null)
-            {
-                val success = audioManager.setCommunicationDevice(audioDeviceInfo)
-                Timber.d("Set USB device as communication device: $success")
-                success
-            }
-            else
-            {
-                Timber.w("USB audio device not found in available communication devices")
-                Timber.w("Available devices: ${availableDevices.map { it.productName }}")
-                false
-            }
-        }
-        catch (e: Exception)
-        {
-            Timber.e(e, "Failed to set USB audio routing")
-            false
         }
     }
 

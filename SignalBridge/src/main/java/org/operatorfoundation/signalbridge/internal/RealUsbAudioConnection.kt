@@ -87,7 +87,7 @@ internal class RealUsbAudioConnection(
             }
 
             // Create and initialize the AudioRecordManager
-            val recordManager = AudioRecordManager(context, usbDevice)
+            val recordManager = AudioRecordManager(context)
 
             // Get likely sample rates for this USB device
             val likelySampleRates = getLikelySampleRates()
