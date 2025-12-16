@@ -124,6 +124,7 @@ class SignalBridgeWSPRAudioSource(
 
             // Extract the requested amount of audio
             val requestedSamples = extractAvailableAudioSamples(requiredSampleCount)
+            Timber.d("DIAG[3] extracted: ${requestedSamples.size} samples, RMS=${requestedSamples.rmsPercent()}")
             performanceStatistics.recordSuccessfulRead(requestedSamples.size)
             requestedSamples
         }
@@ -209,6 +210,9 @@ class SignalBridgeWSPRAudioSource(
                 Timber.d("Starting background audio collection from SignalBridge")
 
                 usbAudioConnection.startRecording().collect { audioData ->
+
+                    Timber.d("DIAG[1] pre-resample: ${audioData.samples.size} samples, RMS=${audioData.samples.rmsPercent()}")
+
                     // Create resampler if needed
                     if (audioResampler == null && audioData.sampleRate != WSPR_REQUIRED_SAMPLE_RATE)
                     {
@@ -225,6 +229,8 @@ class SignalBridgeWSPRAudioSource(
                     {
                         audioData.samples // No resampling needed
                     }
+
+                    Timber.d("DIAG[2] post-resample: ${processedSamples.size} samples, RMS=${processedSamples.rmsPercent()}")
 
                     // Add new samples to our buffer
                     audioSampleBuffer.addAll(processedSamples.toList())
@@ -336,6 +342,13 @@ class SignalBridgeWSPRAudioSource(
         val stats = performanceStatistics.getStatisticsSummary()
 
         Timber.d("SignalBridge Audio Source Stats: ${bufferDurationMs}ms buffered (${bufferUtilization}%), ${stats}")
+    }
+
+    fun ShortArray.rmsPercent(): String
+    {
+        if (isEmpty()) return "empty"
+        val rms = kotlin.math.sqrt(map { (it.toFloat() / Short.MAX_VALUE).let { n -> n * n } }.average())
+        return "%.3f%%".format(rms * 100)
     }
 
 }
