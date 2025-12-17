@@ -112,13 +112,17 @@ class SignalBridgeWSPRAudioSource(
 
             performanceStatistics.recordReadRequest(requiredSampleCount, availableSampleCount)
 
+            // Log once per second during collection
+            if (System.currentTimeMillis() % 1000 < 50) {
+                Timber.d("CHUNK: requested=$requiredSampleCount, available=$availableSampleCount")
+            }
+
             if (availableSampleCount < requiredSampleCount)
             {
                 // Not enough audio available - return what we have
                 val availableSamples = extractAvailableAudioSamples(availableSampleCount)
                 performanceStatistics.recordPartialRead(availableSamples.size)
 
-//                Timber.v("Partial audio read: requested ${requiredSampleCount} samples, returned ${availableSamples.size}")
                 return availableSamples
             }
 
@@ -126,6 +130,7 @@ class SignalBridgeWSPRAudioSource(
             val requestedSamples = extractAvailableAudioSamples(requiredSampleCount)
             Timber.d("DIAG[3] extracted: ${requestedSamples.size} samples, RMS=${requestedSamples.rmsPercent()}")
             performanceStatistics.recordSuccessfulRead(requestedSamples.size)
+
             requestedSamples
         }
         catch (exception: Exception)
@@ -211,8 +216,6 @@ class SignalBridgeWSPRAudioSource(
 
                 usbAudioConnection.startRecording().collect { audioData ->
 
-                    Timber.d("DIAG[1] pre-resample: ${audioData.samples.size} samples, RMS=${audioData.samples.rmsPercent()}")
-
                     // Create resampler if needed
                     if (audioResampler == null && audioData.sampleRate != WSPR_REQUIRED_SAMPLE_RATE)
                     {
@@ -229,8 +232,6 @@ class SignalBridgeWSPRAudioSource(
                     {
                         audioData.samples // No resampling needed
                     }
-
-                    Timber.d("DIAG[2] post-resample: ${processedSamples.size} samples, RMS=${processedSamples.rmsPercent()}")
 
                     // Add new samples to our buffer
                     audioSampleBuffer.addAll(processedSamples.toList())
