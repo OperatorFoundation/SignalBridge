@@ -123,17 +123,11 @@ class SignalBridgeWSPRAudioSource(
                 val availableSamples = extractAvailableAudioSamples(availableSampleCount)
                 performanceStatistics.recordPartialRead(availableSamples.size)
 
-                if (availableSamples.isNotEmpty())
-                {
-                    Timber.d("DIAG[3] partial: ${availableSamples.size} samples, RMS=${availableSamples.rmsPercent()}")
-                }
-
                 return availableSamples
             }
 
             // Extract the requested amount of audio
             val requestedSamples = extractAvailableAudioSamples(requiredSampleCount)
-            Timber.d("DIAG[3] extracted: ${requestedSamples.size} samples, RMS=${requestedSamples.rmsPercent()}")
             performanceStatistics.recordSuccessfulRead(requestedSamples.size)
 
             requestedSamples
