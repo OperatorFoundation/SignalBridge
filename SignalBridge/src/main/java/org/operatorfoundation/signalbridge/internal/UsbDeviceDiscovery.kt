@@ -118,7 +118,7 @@ internal class UsbDeviceDiscovery(private val context: Context, private val usbM
     /**
      * Gets the current list of connected USB devices
      */
-    private fun getCurrentAudioDevices(): List<UsbAudioDevice>
+    internal fun getCurrentAudioDevices(): List<UsbAudioDevice>
     {
         val deviceList = usbManager.deviceList
         Timber.d("Scanning ${deviceList.size} USB devices for audio capabilities")
