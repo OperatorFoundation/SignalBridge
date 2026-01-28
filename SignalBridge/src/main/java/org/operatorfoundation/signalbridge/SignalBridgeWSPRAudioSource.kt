@@ -118,6 +118,7 @@ class SignalBridgeWSPRAudioSource(
             val now = System.currentTimeMillis()
             if (now - lastChunkLogTime >= 5000) {
                 Timber.d("CHUNK: requested=$requiredSampleCount, available=$availableSampleCount")
+                lastChunkLogTime = now
             }
 
             if (availableSampleCount < requiredSampleCount)
