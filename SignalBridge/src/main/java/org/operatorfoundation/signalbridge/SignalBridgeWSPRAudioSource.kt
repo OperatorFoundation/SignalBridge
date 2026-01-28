@@ -65,6 +65,8 @@ class SignalBridgeWSPRAudioSource(
      */
     private var audioResampler: AudioResampler? = null
 
+    private var lastChunkLogTime = 0L
+
     // ========== WSPRAudioSource Implementation ==========
 
     override suspend fun initialize(): Result<Unit>
@@ -112,8 +114,9 @@ class SignalBridgeWSPRAudioSource(
 
             performanceStatistics.recordReadRequest(requiredSampleCount, availableSampleCount)
 
-            // Log once per second during collection
-            if (System.currentTimeMillis() % 1000 < 50) {
+            // Log once every 5 second during collection
+            val now = System.currentTimeMillis()
+            if (now - lastChunkLogTime >= 5000) {
                 Timber.d("CHUNK: requested=$requiredSampleCount, available=$availableSampleCount")
             }
 
