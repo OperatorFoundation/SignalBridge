@@ -144,6 +144,12 @@ class SignalBridgeWSPRAudioSource(
         }
     }
 
+    override suspend fun flushBuffer()
+    {
+        audioSampleBuffer.clear()
+        Timber.d("Audio sample buffer flushed")
+    }
+
     override suspend fun cleanup()
     {
         Timber.d("Cleaning up SignalBridge WSPR audio source")
