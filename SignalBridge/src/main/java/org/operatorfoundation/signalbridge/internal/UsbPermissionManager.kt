@@ -121,7 +121,7 @@ internal class UsbPermissionManager(private val context: Context, private val us
 
             // Register the receiver for permission responses
             val filter = IntentFilter(ACTION_USB_PERMISSION)
-            context.registerReceiver(receiver, filter)
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
 
             // Create pending intent for permission request
             val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
