@@ -67,12 +67,21 @@ internal class UsbAudioManagerImpl(private val context: Context) : UsbAudioManag
             currentConnection?.let { existingConnection ->
                 if (existingConnection.device.deviceId == device.deviceId)
                 {
-                    Timber.d("Already connected to device: ${device.displayName}")
-                    return Result.success(existingConnection)
+                    // Verify connection is still usable — disconnect() nulls audioRecordManager
+                    if (existingConnection.getAudioRecordInfo() != null)
+                    {
+                        Timber.d("Already connected to device: ${device.displayName}")
+                        return Result.success(existingConnection)
+                    }
+                    else
+                    {
+                        // Stale reference — was released, fall through to reconnect
+                        Timber.d("Cached connection for ${device.displayName} is stale, reconnecting")
+                        currentConnection = null
+                    }
                 }
                 else
                 {
-                    // Disconnect from current device first
                     Timber.d("Disconnecting from current device before connecting to new one")
                     existingConnection.disconnect()
                     currentConnection = null
