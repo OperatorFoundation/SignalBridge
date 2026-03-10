@@ -379,6 +379,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
     /**
      * Connects to a serial device for custom radio communication.
      */
+    /**
+     * Connects to a serial device for custom radio communication.
+     * createConnection() fires the connection process and updates connectionState internally.
+     * We observe connectionState separately to track progress.
+     */
     fun connectToSerialDevice(driver: UsbSerialDriver)
     {
         viewModelScope.launch {
@@ -386,50 +391,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
             {
                 updateStatusMessage("Connecting to custom radio...")
 
+                // Kick off the connection process (returns Unit — does not return a Flow)
+                serialConnectionFactory.createConnection(driver.device)
+
+                // Observe connection state from the factory's StateFlow
                 var connectionEstablished = false
+                serialConnectionFactory.connectionState
+                    .collect { state ->
+                        when (state)
+                        {
+                            is SerialConnectionFactory.ConnectionState.Connected -> {
+                                if (!connectionEstablished)
+                                {
+                                    connectionEstablished = true
+                                    currentSerialConnection = state.connection
+                                    serialReader = SerialReader(state.connection)
 
-                serialConnectionFactory.createConnection(driver.device).collect { state ->
-                    when (state)
-                    {
-                        is SerialConnectionFactory.ConnectionState.Connected -> {
-                            if (!connectionEstablished)
-                            {
-                                connectionEstablished = true
-                                currentSerialConnection = state.connection
-                                serialReader = SerialReader(state.connection)
+                                    _uiState.update {
+                                        it.copy(
+                                            connectedSerialDevice = driver,
+                                            serialConnectionState = state
+                                        )
+                                    }
 
-                                _uiState.update {
-                                    it.copy(
-                                        connectedSerialDevice = driver,
-                                        serialConnectionState = state
-                                    )
+                                    updateStatusMessage("Connected to custom radio: ${driver.device.deviceName}")
+                                    Timber.i("Successfully connected to serial device: ${driver.device.deviceName}")
+
+                                    startSerialReading()
                                 }
-
-                                updateStatusMessage("Connected to custom radio: ${driver.device.deviceName}")
-                                Timber.i("Successfully connected to serial device: ${driver.device.deviceName}")
-
-                                // Start continuous reading using SerialReader
-                                startSerialReading()
                             }
-                        }
 
-                        is SerialConnectionFactory.ConnectionState.Error -> {
-                            val errorMessage = "Serial connection failed: ${state.message}"
-                            updateErrorMessage(errorMessage)
-                            Timber.e("Serial connection failed: ${state.message}")
-                        }
+                            is SerialConnectionFactory.ConnectionState.Error -> {
+                                val errorMessage = "Serial connection failed: ${state.message}"
+                                updateErrorMessage(errorMessage)
+                                Timber.e("Serial connection failed: ${state.message}")
+                            }
 
-                        is SerialConnectionFactory.ConnectionState.RequestingPermission -> {
-                            updateStatusMessage("Requesting USB permission for radio...")
-                        }
+                            is SerialConnectionFactory.ConnectionState.RequestingPermission -> {
+                                updateStatusMessage("Requesting USB permission for radio...")
+                            }
 
-                        is SerialConnectionFactory.ConnectionState.Connecting -> {
-                            updateStatusMessage("Establishing serial connection...")
-                        }
+                            is SerialConnectionFactory.ConnectionState.Connecting -> {
+                                updateStatusMessage("Establishing serial connection...")
+                            }
 
-                        else -> { /* Handle other states if needed */ }
+                            else -> { /* Disconnected — no action needed here */ }
+                        }
                     }
-                }
             }
             catch (exception: Exception)
             {
