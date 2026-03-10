@@ -126,14 +126,13 @@ internal class UsbPermissionManager(private val context: Context, private val us
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
 
             // Create pending intent for permission request
-            val pendingIntentFlags =
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-
             val permissionIntent = PendingIntent.getBroadcast(
                 context,
-                device.deviceId, // Use the device ID as a unique request code
-                Intent(ACTION_USB_PERMISSION),
-                pendingIntentFlags
+                device.deviceId,
+                Intent(ACTION_USB_PERMISSION).apply {
+                    `package` = context.packageName  // explicit intent, required for FLAG_MUTABLE on Android 14+
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             )
 
             // Set up cancellation handling
