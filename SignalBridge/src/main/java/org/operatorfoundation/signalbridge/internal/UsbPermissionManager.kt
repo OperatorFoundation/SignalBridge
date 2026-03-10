@@ -58,10 +58,12 @@ internal class UsbPermissionManager(private val context: Context, private val us
 
         return when (result)
         {
-            null ->
-                {
-                Timber.w("Permission request timed out for device: ${device.productName}")
-                false
+            null -> {
+                // Broadcast was missed, but user may have granted permission anyway.
+                // Check directly before reporting failure.
+                val granted = hasPermission(device)
+                Timber.w("Permission broadcast not received for ${device.productName}, direct check: $granted")
+                granted
             }
 
             else ->
@@ -124,14 +126,8 @@ internal class UsbPermissionManager(private val context: Context, private val us
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
 
             // Create pending intent for permission request
-            val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-            {
+            val pendingIntentFlags =
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            }
-            else
-            {
-                PendingIntent.FLAG_UPDATE_CURRENT
-            }
 
             val permissionIntent = PendingIntent.getBroadcast(
                 context,
