@@ -72,7 +72,7 @@ class SignalBridgeWSPRAudioSource(
     override suspend fun initialize(): Result<Unit>
     {
         if (audioCollectionJob?.isActive == true) return Result.success(Unit)
-        
+
         return try
         {
             Timber.d("Initializing SignalBridge WSPR audio source")
