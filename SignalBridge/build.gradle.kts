@@ -84,7 +84,7 @@ afterEvaluate {
 }
 
 dependencies {
-    implementation("com.github.OperatorFoundation:AudioCoderAndroid:5e1ae7db4d")
+    implementation("com.github.OperatorFoundation:AudioCoderAndroid:v1.1.0")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
