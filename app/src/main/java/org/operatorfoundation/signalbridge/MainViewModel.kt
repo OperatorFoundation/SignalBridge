@@ -11,10 +11,16 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import org.operatorfoundation.audiocoder.*
-import org.operatorfoundation.audiocoder.models.WSPRStationConfiguration
-import org.operatorfoundation.audiocoder.models.WSPRStationState
-import org.operatorfoundation.audiocoder.WSPREncoder
+import org.operatorfoundation.audiocoder.wspr.CJarInterface
+import org.operatorfoundation.audiocoder.wspr.WSPRAudioSource
+import org.operatorfoundation.audiocoder.wspr.WSPREncoder
+import org.operatorfoundation.audiocoder.wspr.WSPRFileManager
+import org.operatorfoundation.audiocoder.wspr.WSPRStation
+import org.operatorfoundation.audiocoder.wspr.WSPRConstants
+import org.operatorfoundation.audiocoder.wspr.models.WSPRStationConfiguration
+import org.operatorfoundation.audiocoder.wspr.models.WSPRStationState
+import org.operatorfoundation.audiocoder.wspr.models.WSPRDecodeResult
+import org.operatorfoundation.audiocoder.wspr.models.WSPRCycleInformation
 import org.operatorfoundation.iota.IotaObject
 import org.operatorfoundation.iota.nouns.Noun
 import org.operatorfoundation.iota.toIotaValue
@@ -115,7 +121,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
                 // 2: Create the WSPR audio source
                 val audioSource = SignalBridgeWSPRAudioSource(
                     usbAudioConnection = usbConnection,
-                    bufferConfiguration = AudioBufferConfiguration.createDefault()
+                    bufferConfiguration = AudioBufferConfiguration.createDefault(WSPRConstants.WSPR_REQUIRED_SAMPLE_RATE)
                 )
 
                 // 3: Create and configure the WSPR station
@@ -997,7 +1003,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application)
 
                 // Generate frequency array using AudioCoder
                 val frequencyArray: LongArray = WSPREncoder.encodeToFrequencies(
-                    WSPREncoder.WSPRMessage(
+                    WSPREncoder.WSPREncodeRequest(
                         testCallsign,
                         testGridSquare,
                         testPower,

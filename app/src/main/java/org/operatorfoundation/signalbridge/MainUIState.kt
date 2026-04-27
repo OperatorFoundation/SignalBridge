@@ -2,9 +2,9 @@ package org.operatorfoundation.signalbridge
 
 import android.content.Intent
 import com.hoho.android.usbserial.driver.UsbSerialDriver
-import org.operatorfoundation.audiocoder.models.WSPRCycleInformation
-import org.operatorfoundation.audiocoder.models.WSPRDecodeResult
-import org.operatorfoundation.audiocoder.models.WSPRStationState
+import org.operatorfoundation.audiocoder.wspr.models.WSPRCycleInformation
+import org.operatorfoundation.audiocoder.wspr.models.WSPRDecodeResult
+import org.operatorfoundation.audiocoder.wspr.models.WSPRStationState
 import org.operatorfoundation.signalbridge.models.AudioLevelInfo
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import org.operatorfoundation.transmission.SerialConnectionFactory

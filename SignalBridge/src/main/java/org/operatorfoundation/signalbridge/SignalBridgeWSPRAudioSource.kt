@@ -2,11 +2,13 @@ package org.operatorfoundation.signalbridge
 
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import org.operatorfoundation.audiocoder.AudioResampler
-import org.operatorfoundation.audiocoder.WSPRAudioSource
-import org.operatorfoundation.audiocoder.WSPRAudioSourceException
-import org.operatorfoundation.audiocoder.WSPRConstants.WSPR_REQUIRED_SAMPLE_RATE
-import org.operatorfoundation.audiocoder.models.WSPRAudioSourceStatus
+import org.operatorfoundation.audiocoder.common.AudioResampler
+import org.operatorfoundation.audiocoder.wspr.WSPRAudioSource
+import org.operatorfoundation.audiocoder.wspr.WSPRConstants.WSPR_REQUIRED_SAMPLE_RATE
+import org.operatorfoundation.audiocoder.common.models.AudioSourceStatus
+import org.operatorfoundation.signalbridge.exceptions.AudioRecordInitializationException
+import org.operatorfoundation.signalbridge.exceptions.AudioRecordingException
+import org.operatorfoundation.signalbridge.exceptions.DeviceNotFoundException
 import org.operatorfoundation.signalbridge.internal.AudioSourcePerformanceStatistics
 import org.operatorfoundation.signalbridge.models.AudioBufferConfiguration
 import timber.log.Timber
@@ -34,7 +36,7 @@ import kotlin.math.max
  */
 class SignalBridgeWSPRAudioSource(
     private val usbAudioConnection: UsbAudioConnection,
-    private val bufferConfiguration: AudioBufferConfiguration = AudioBufferConfiguration.createDefault()
+    private val bufferConfiguration: AudioBufferConfiguration = AudioBufferConfiguration.createDefault(WSPR_REQUIRED_SAMPLE_RATE)
 ) : WSPRAudioSource
 {
     /**
@@ -53,7 +55,7 @@ class SignalBridgeWSPRAudioSource(
      * Current operational status of this audio source.
      * Updated as conditions change during operation.
      */
-    private var currentStatus = WSPRAudioSourceStatus.createNonOperationalStatus("Not initialized")
+    private var currentStatus = AudioSourceStatus.createNonOperationalStatus("Not initialized")
 
     /**
      * Statistics for monitoring audio source performance health.
@@ -81,9 +83,8 @@ class SignalBridgeWSPRAudioSource(
             if (!usbAudioConnection.isDeviceConnected())
             {
                 val errorMessage = "USB audio device is not connected"
-                currentStatus = WSPRAudioSourceStatus.createNonOperationalStatus(errorMessage)
-                return Result.failure(WSPRAudioSourceException.createInitializationFailure("USB device", Exception(errorMessage)))
-            }
+                currentStatus = AudioSourceStatus.createNonOperationalStatus(errorMessage)
+                return Result.failure(DeviceNotFoundException(-1, errorMessage))            }
 
             // Clear any existing audio buffer
             audioSampleBuffer.clear()
@@ -93,7 +94,7 @@ class SignalBridgeWSPRAudioSource(
             startBackgroundAudioCollection()
 
             // Update status to operational
-            currentStatus = WSPRAudioSourceStatus.createNonOperationalStatus("USB audio streaming active")
+            currentStatus = AudioSourceStatus.createNonOperationalStatus("USB audio streaming active")
 
             Timber.i("SignalBridge WSPR audio source initialized successfully")
             Result.success(Unit)
@@ -101,9 +102,15 @@ class SignalBridgeWSPRAudioSource(
         catch (exception: Exception)
         {
             val errorMessage = "Failed to initialize SignalBridge audio source: ${exception.message}"
-            currentStatus = WSPRAudioSourceStatus.createNonOperationalStatus(errorMessage)
+            currentStatus = AudioSourceStatus.createNonOperationalStatus(errorMessage)
             Timber.e(exception, errorMessage)
-            Result.failure(WSPRAudioSourceException.createInitializationFailure("SignalBridge USB connection", exception))
+            Result.failure(
+                AudioRecordInitializationException(
+                    0,
+                    WSPR_REQUIRED_SAMPLE_RATE,
+                    cause = exception
+                )
+            )
         }
     }
 
@@ -142,7 +149,11 @@ class SignalBridgeWSPRAudioSource(
         {
             performanceStatistics.recordReadError()
             Timber.e(exception, "Error reading audio chunk for ${durationMs}ms")
-            throw WSPRAudioSourceException.createReadFailure(exception)
+            throw AudioRecordingException(
+                "reading",
+                "Failed to read audio chunk: ${exception.message}",
+                exception
+            )
         }
     }
 
@@ -171,7 +182,7 @@ class SignalBridgeWSPRAudioSource(
             audioResampler = null
 
             // Update status
-            currentStatus = WSPRAudioSourceStatus.createNonOperationalStatus("Cleaned up")
+            currentStatus = AudioSourceStatus.createNonOperationalStatus("Cleaned up")
 
             Timber.i("SignalBridge WSPR audio source cleanup complete")
 
@@ -183,7 +194,7 @@ class SignalBridgeWSPRAudioSource(
         }
     }
 
-    override suspend fun getSourceStatus(): WSPRAudioSourceStatus
+    override suspend fun getSourceStatus(): AudioSourceStatus
     {
         // Update status with current buffer information
         val bufferStatus = if (currentStatus.isOperational)
@@ -261,7 +272,7 @@ class SignalBridgeWSPRAudioSource(
             catch (exception: Exception)
             {
                 val errorMessage = "Background audio collection failed: ${exception.message}"
-                currentStatus = WSPRAudioSourceStatus.createNonOperationalStatus(errorMessage)
+                currentStatus = AudioSourceStatus.createNonOperationalStatus(errorMessage)
                 Timber.e(exception, errorMessage)
             }
         }

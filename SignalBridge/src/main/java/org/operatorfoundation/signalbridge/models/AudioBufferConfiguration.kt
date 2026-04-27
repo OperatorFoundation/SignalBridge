@@ -1,7 +1,5 @@
 package org.operatorfoundation.signalbridge.models
 
-import org.operatorfoundation.audiocoder.WSPRConstants.WSPR_REQUIRED_SAMPLE_RATE
-
 /**
  * Configuration parameters for audio buffering behavior.
  * Controls memory usage and performance characteristics of the audio source.
@@ -27,10 +25,8 @@ data class AudioBufferConfiguration(
          *  - 3 minute target buffering (for WSPR timing + wiggle room)
          *  - 30 seconds minimum buffering (to prevent underruns)
          */
-        fun createDefault(): AudioBufferConfiguration
+        fun createDefault(sampleRate: Int): AudioBufferConfiguration
         {
-            val sampleRate = WSPR_REQUIRED_SAMPLE_RATE
-
             return AudioBufferConfiguration(
                 maximumBufferSamples = sampleRate * 300, // 5 minutes
                 targetBufferSamples = sampleRate * 180, // 3 minutes
@@ -42,10 +38,8 @@ data class AudioBufferConfiguration(
          * Creates a configuration optimized for low-memory environments.
          * Reduce buffer size while keeping within the bounds of functional operation.
          */
-        fun createLowMemoryConfiguration(): AudioBufferConfiguration
+        fun createLowMemoryConfiguration(sampleRate: Int): AudioBufferConfiguration
         {
-            val sampleRate = WSPR_REQUIRED_SAMPLE_RATE
-
             return AudioBufferConfiguration(
                 maximumBufferSamples = sampleRate * 150, // 2.5 minutes
                 targetBufferSamples = sampleRate * 120, // 2 minutes
@@ -56,10 +50,8 @@ data class AudioBufferConfiguration(
         /**
          * Creates a configuration for high-performance environments.
          */
-        fun createHighPerformanceConfiguration(): AudioBufferConfiguration
+        fun createHighPerformanceConfiguration(sampleRate: Int): AudioBufferConfiguration
         {
-            val sampleRate = WSPR_REQUIRED_SAMPLE_RATE
-
             return AudioBufferConfiguration(
                 maximumBufferSamples = sampleRate * 600, // 10 minutes
                 targetBufferSamples = sampleRate * 300,  // 5 minutes
