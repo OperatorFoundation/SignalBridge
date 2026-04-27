@@ -28,9 +28,9 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.isGranted
 import org.operatorfoundation.audiocoder.*
-import org.operatorfoundation.audiocoder.models.WSPRCycleInformation
-import org.operatorfoundation.audiocoder.models.WSPRDecodeResult
-import org.operatorfoundation.audiocoder.models.WSPRStationState
+import org.operatorfoundation.audiocoder.wspr.models.WSPRCycleInformation
+import org.operatorfoundation.audiocoder.wspr.models.WSPRDecodeResult
+import org.operatorfoundation.audiocoder.wspr.models.WSPRStationState
 import org.operatorfoundation.signalbridge.models.AudioLevelInfo
 import org.operatorfoundation.signalbridge.models.UsbAudioDevice
 import org.operatorfoundation.signalbridge.ui.theme.SignalBridgeDemoTheme
