@@ -29,7 +29,7 @@ import org.operatorfoundation.audiocoder.common.AudioResampler
  *                         for MFSK-16.
  */
 fun UsbAudioConnection.asAudioFlow(targetSampleRate: Int): Flow<ShortArray> = flow {
-    
+
     // Resampler is created on the first chunk where the hardware rate differs
     // from the target. Most USB audio devices deliver at a fixed rate per session,
     // so this is effectively created once and reused for the lifetime of the flow.

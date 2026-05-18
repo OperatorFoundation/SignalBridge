@@ -41,8 +41,8 @@ android {
 dependencies {
     implementation(project(":SignalBridge"))
 
-    implementation("com.github.OperatorFoundation:AudioCoderAndroid:93fa10d689") // Radio codec (WSPR) Library
-    implementation("com.github.OperatorFoundation:TransmissionAndroid:16c440cf8a") // Serial communications
+    implementation("com.github.OperatorFoundation:AudioCoderAndroid:v1.3.6") // Radio codec (WSPR) Library
+    implementation("com.github.OperatorFoundation:TransmissionAndroid:v1.5.1") // Serial communications
     implementation("com.github.OperatorFoundation:ion-android:1.0.8") // Communication protocol
     implementation("com.github.OperatorFoundation:iota-android:1.0.7")
     implementation("com.github.OperatorFoundation:CodexKotlin:ddc1e334a5") // Message Encoding
