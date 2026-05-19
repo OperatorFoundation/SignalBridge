@@ -1,9 +1,9 @@
 [versions]
 accompanistPermissions = "0.32.0"
-agp = "8.11.1"
+agp = "9.0.1"
 audiocoderandroid = "main-SNAPSHOT"
 composeBomVersion = "2024.02.00"
-kotlin = "2.0.21"
+kotlin = "2.2.10"
 coreKtx = "1.16.0"
 junit = "4.13.2"
 junitVersion = "1.2.1"

@@ -29,23 +29,22 @@ import org.operatorfoundation.audiocoder.common.AudioResampler
  *                         for MFSK-16.
  */
 fun UsbAudioConnection.asAudioFlow(targetSampleRate: Int): Flow<ShortArray> = flow {
-
-    // Resampler is created on the first chunk where the hardware rate differs
-    // from the target. Most USB audio devices deliver at a fixed rate per session,
-    // so this is effectively created once and reused for the lifetime of the flow.
     var resampler: AudioResampler? = null
 
     startRecording().collect { audioData ->
+        val incomingRate: Int = audioData.sampleRate
+        val incomingSamples: ShortArray = audioData.samples
+        val needsResampling: Boolean = incomingRate != targetSampleRate
 
-        if (resampler == null && audioData.sampleRate != targetSampleRate)
-        {
-            resampler = AudioResampler(audioData.sampleRate, targetSampleRate)
+        if (resampler == null && needsResampling) {
+            resampler = AudioResampler(incomingRate, targetSampleRate)
         }
 
-        val samples = if (resampler != null)
-            resampler!!.resample(audioData.samples)
-        else
-            audioData.samples
+        val samples: ShortArray = if (resampler != null) {
+            resampler!!.resample(incomingSamples)
+        } else {
+            incomingSamples
+        }
 
         emit(samples)
     }

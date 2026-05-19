@@ -33,3 +33,4 @@ google-services.json
 *.hprof
 *.salive
 app/src/.DS_Store
+gradle/gradle-daemon-jvm.properties

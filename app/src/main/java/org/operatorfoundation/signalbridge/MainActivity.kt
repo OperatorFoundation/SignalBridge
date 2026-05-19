@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -630,9 +631,11 @@ fun AudioLevelMonitoringCard(
                     }
 
                     LinearProgressIndicator(
-                        progress = level.currentLevel,
-                        modifier = Modifier.fillMaxWidth(),
-                        color = if (level.currentLevel > 0.8f) colors.warning else colors.success
+                    progress = { level.currentLevel },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = if (level.currentLevel > 0.8f) colors.warning else colors.success,
+                    trackColor = ProgressIndicatorDefaults.linearTrackColor,
+                    strokeCap = ProgressIndicatorDefaults.LinearStrokeCap,
                     )
 
                     // Peak hold
@@ -653,11 +656,13 @@ fun AudioLevelMonitoringCard(
                     }
 
                     LinearProgressIndicator(
-                        progress = level.peakLevel,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp),
-                        color = colors.accent
+                    progress = { level.peakLevel },
+                    modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(8.dp),
+                    color = colors.accent,
+                    trackColor = ProgressIndicatorDefaults.linearTrackColor,
+                    strokeCap = ProgressIndicatorDefaults.LinearStrokeCap,
                     )
                 }
             }
@@ -737,13 +742,15 @@ fun WSPRTimingAndStatusCard(
                     }
 
                     LinearProgressIndicator(
-                        progress = cycle.cycleProgressPercentage,
-                        modifier = Modifier.fillMaxWidth(),
-                        color = when {
-                            cycle.isDecodeWindowOpen -> colors.accent
-                            cycle.isTransmissionActive -> colors.primary
-                            else -> colors.secondary
-                        }
+                    progress = { cycle.cycleProgressPercentage },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = when {
+                                                cycle.isDecodeWindowOpen -> colors.accent
+                                                cycle.isTransmissionActive -> colors.primary
+                                                else -> colors.secondary
+                                            },
+                    trackColor = ProgressIndicatorDefaults.linearTrackColor,
+                    strokeCap = ProgressIndicatorDefaults.LinearStrokeCap,
                     )
 
                     Row(
